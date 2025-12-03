@@ -6,7 +6,7 @@ import json
 
 # --- 1. 配置你的 AI ---
 # ⚠️⚠️⚠️ 请在这里填入你在 Google AI Studio 申请的 API Key
-GOOGLE_API_KEY = "AIzaSyC95ElTFpyprSvdi5WLpuXzyaI-h2o-xWM" 
+GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"] 
 
 # 配置 Gemini
 try:
@@ -112,4 +112,5 @@ for item in st.session_state['history']:
     with st.expander(f"🕒 {item['time']} | {item['sentence'][:10]}..."):
         st.info(item['sentence'])
         df_hist = pd.DataFrame(item['data'])
+
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
