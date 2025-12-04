@@ -5,7 +5,6 @@ from datetime import datetime
 import json
 import gspread
 import pytz 
-import math # 引入 math 库，虽然在这里没用到，但保持代码清洁
 
 # --- 1. 配置你的 AI ---
 try:
@@ -20,16 +19,9 @@ except Exception as e:
 
 # --- 2. 数据库连接配置 (Google Sheets) ---
 SHEET_TITLE = "Japanese_Grammar_History"
+# ⚠️⚠️⚠️ 请保持你已经配置好的 Google Sheets 完整网址不变！
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xrXmiV5yEYIC4lDfgjk79vQDNVHYZugW6XUReZbHWjY/edit?gid=0#gid=0" 
 
-# 替换你 app_mobile.py 中的 wrap_text 函数
-def wrap_text(text, width=12):
-    """将文本切分为列表，Streamlit ListColumn 会强制每段新起一行"""
-    if not isinstance(text, str):
-        return [text] # 确保返回列表
-    
-    # 返回一个包含 12 字符片段的列表
-    return [text[i:i+width] for i in range(0, len(text), width)]
 @st.cache_resource(ttl=3600) # 缓存连接
 def get_sheets_client():
     try:
@@ -49,7 +41,7 @@ def get_sheets_client():
         return None
 
 def load_history():
-    """从 Google Sheets 读取历史记录，并将 JSON 字符串解析回 Python 对象"""
+    """从 Google Sheets 读取历史记录"""
     gc = get_sheets_client()
     if not gc: return pd.DataFrame()
     
@@ -59,13 +51,13 @@ def load_history():
         df = pd.DataFrame(worksheet.get_all_records())
         
         if 'data_json' in df.columns:
-            # 关键步骤：将 data_json 这一列的 JSON 字符串解析成 Python 列表/字典
+            # 解析 JSON 字符串
             df['data'] = df['data_json'].apply(lambda x: json.loads(x) if x else [])
-            df = df.drop(columns=['data_json']) # 移除原始 JSON 字符串列
+            df = df.drop(columns=['data_json'])
             
-        return df.iloc[::-1] # 倒序，最新记录在前
+        return df.iloc[::-1] # 倒序
     except gspread.exceptions.SpreadsheetNotFound:
-        st.warning(f"Google 表格 '{SHEET_TITLE}' 不存在或无访问权限。请检查共享设置。")
+        st.warning(f"Google 表格 '{SHEET_TITLE}' 不存在或无访问权限。")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"加载历史记录失败: {e}")
@@ -106,12 +98,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 隐藏右上角菜单的样式
+# 隐藏右上角菜单
 hide_menu_style = """
         <style>
         #MainMenu {visibility: hidden;}
         header {visibility: hidden;}
         footer {visibility: hidden;}
+        /* 尝试强制表格文本换行 (针对 st.table) */
+        td { white-space: normal !important; word-wrap: break-word !important; }
         </style>
         """
 st.markdown(hide_menu_style, unsafe_allow_html=True)
@@ -120,7 +114,7 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 if 'user_id' not in st.session_state:
     st.session_state['user_id'] = '用户A'
 
-# --- 4. 核心功能：AI 分析 (保持不变) ---
+# --- 4. 核心功能：AI 分析 ---
 def analyze_with_ai(text):
     prompt = f"""
     请作为一位专业的日语老师，分析以下日语句子：
@@ -142,40 +136,26 @@ def analyze_with_ai(text):
         result = json.loads(clean_text)
         
         if not isinstance(result, list) or not result:
-            return [{"word": "错误", "pos_meaning": "AI未能返回有效的语法解析结果。请尝试使用不同的句子或检查网络连接。"}]
+            return [{"word": "错误", "pos_meaning": "AI未能返回有效的语法解析结果。"}]
             
         return result
         
-    except json.JSONDecodeError as e:
-        error_msg = f"AI返回格式错误，请稍后再试。原始错误：{e}"
-        if len(response.text) > 200:
-             error_msg += f" ... AI返回内容片段: {response.text[:200]}..."
-        return [{"word": "错误", "pos_meaning": error_msg}]
-
     except Exception as e:
         return [{"word": "错误", "pos_meaning": f"AI分析失败: {e}"}]
+
+# 定义列名映射字典 (用于美化 st.table 的表头)
+COLUMN_MAPPING = {
+    "word": "单词 (日文)",
+    "reading": "读音 (罗马字)",
+    "pos_meaning": "品词 / 意味", 
+    "grammar": "语法说明",
+    "standard": "标准形式"
+}
 
 # --- 5. 界面 UI ---
 st.title("🇯🇵 日语语法伴侣 (云同步 AI Pro)")
 
 st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称 (用于历史记录):", value=st.session_state['user_id'])
-
-# 替换你 app_mobile.py 中的 COLUMN_CONFIG
-# 🌟 关键：使用 ListColumn 强制显示列表内容，达到多行效果
-COLUMN_CONFIG = {
-    "word": "部分 (日文)",
-    "reading": "读音 (罗马字)",
-    "pos_meaning": st.column_config.ListColumn(
-        "品词 / 意味",
-        # ListColumn 默认会垂直显示列表中的每个元素，实现换行
-        width="medium" 
-    ), 
-    "grammar": st.column_config.ListColumn(
-        "语法说明",
-        width="large"
-    ),
-    "standard": "标准形式"
-}
 
 # 输入区
 with st.container():
@@ -188,30 +168,19 @@ with st.container():
             with st.spinner('AI 老师正在分析语法 (约需3秒)...'):
                 result_data = analyze_with_ai(sentence)
                 
-                # 写入 Google Sheets (只有成功解析才写入)
+                # 写入 Google Sheets
                 if result_data and 'word' in result_data[0] and '错误' not in result_data[0]['word']:
                     save_record(sentence, result_data)
                 
-                # 显示结果
                 st.success("解析完成！")
                 st.markdown("### 📝 深度拆解")
                 
-                # 🌟 关键：对当前解析结果进行强制换行处理
-                wrapped_data = []
-                for item in result_data:
-                    # 仅对目标列进行换行处理
-                    item['pos_meaning'] = wrap_text(item.get('pos_meaning', ''), width=12)
-                    item['grammar'] = wrap_text(item.get('grammar', ''), width=12)
-                    wrapped_data.append(item)
-                    
-                df = pd.DataFrame(wrapped_data)
-                
-                st.dataframe(
-                    df, 
-                    column_config=COLUMN_CONFIG,
-                    use_container_width=True,
-                    hide_index=True
-                )
+                # 🌟 使用 st.table 替代 st.dataframe
+                df = pd.DataFrame(result_data)
+                # 重命名列以显示中文表头
+                df_display = df.rename(columns=COLUMN_MAPPING)
+                # st.table 会自动换行显示所有文本
+                st.table(df_display)
 
 st.divider()
 
@@ -229,26 +198,13 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             st.info(item['sentence'])
             
             if item['data']:
-                # 🌟 关键：对历史记录数据进行强制换行处理
-                wrapped_hist_data = []
-                for hist_item in item['data']:
-                    hist_item['pos_meaning'] = wrap_text(hist_item.get('pos_meaning', ''), width=12)
-                    hist_item['grammar'] = wrap_text(hist_item.get('grammar', ''), width=12)
-                    wrapped_hist_data.append(hist_item)
-                    
-                df_hist = pd.DataFrame(wrapped_hist_data)
                 st.markdown("##### 详细解析结果")
-                
-                st.dataframe(
-                    df_hist, 
-                    column_config=COLUMN_CONFIG,
-                    use_container_width=True, 
-                    hide_index=True
-                )
+                df_hist = pd.DataFrame(item['data'])
+                # 同样对历史记录使用 st.table 并重命名列
+                df_hist_display = df_hist.rename(columns=COLUMN_MAPPING)
+                st.table(df_hist_display)
             else:
                 st.warning("本次查询无有效的解析数据。")
     
 else:
     st.info("历史记录加载失败或表格为空。请检查 Google Sheets 共享设置和配置。")
-
-
