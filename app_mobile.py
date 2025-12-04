@@ -24,7 +24,27 @@ SHEET_TITLE = "Japanese_Grammar_History"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xrXmiV5yEYIC4lDfgjk79vQDNVHYZugW6XUReZbHWjY/edit?gid=0#gid=0" 
 
 @st.cache_resource(ttl=3600) # 缓存连接，避免重复认证
+@st.cache_resource(ttl=3600)
 def get_sheets_client():
+    try:
+        # 尝试从 Secrets 中读取原样粘贴的 JSON 字符串
+        if "GCP_JSON_STRING" in st.secrets:
+            key_dict = json.loads(st.secrets["GCP_JSON_STRING"])
+            gc = gspread.service_account_from_dict(key_dict)
+            return gc
+
+        # 兼容旧的配置方式 (备用)
+        elif "gcp_service_account" in st.secrets:
+            gcp_sa = st.secrets["gcp_service_account"]
+            gc = gspread.service_account_from_dict(gcp_sa)
+            return gc
+
+        else:
+            st.warning("未找到 Google Cloud 凭证 (GCP_JSON_STRING)。")
+            return None
+    except Exception as e:
+        st.error(f"Google Sheets 认证失败: {e}")
+        return None
     try:
         gcp_sa = st.secrets["gcp_service_account"]
         gc = gspread.service_account_from_dict(gcp_sa)
@@ -194,3 +214,4 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
 else:
     st.info("历史记录加载失败或表格为空。请检查 Google Sheets 共享设置和配置。")
+
