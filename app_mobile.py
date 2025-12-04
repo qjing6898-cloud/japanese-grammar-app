@@ -1,3 +1,6 @@
+from datetime import datetime
+import json
+import pytz # <--- 新增
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
@@ -77,7 +80,8 @@ with st.container():
                 result_data = analyze_with_ai(sentence)
                 
                 # 保存历史
-                timestamp = datetime.now().strftime("%m-%d %H:%M")
+                tz = pytz.timezone('Asia/Shanghai')
+                timestamp = datetime.now(tz).strftime("%m-%d %H:%M")
                 st.session_state['history'].insert(0, {
                     "time": timestamp,
                     "sentence": sentence,
@@ -114,3 +118,4 @@ for item in st.session_state['history']:
         df_hist = pd.DataFrame(item['data'])
 
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
+
