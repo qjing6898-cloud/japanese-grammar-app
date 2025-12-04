@@ -22,14 +22,17 @@ except Exception as e:
 SHEET_TITLE = "Japanese_Grammar_History"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xrXmiV5yEYIC4lDfgjk79vQDNVHYZugW6XUReZbHWjY/edit?gid=0#gid=0" 
 
-# 🌟 核心函数：强制字符换行
+# 🌟 修正后的核心函数：强制使用 HTML <br> 标签换行
 def wrap_text(text, width=12):
-    """在指定字符宽度后插入换行符 \n"""
+    """在指定字符宽度后插入 HTML <br> 换行符，以确保 st.dataframe 识别"""
     if not isinstance(text, str):
         return text
-    # 使用列表推导式，每隔 width 字符进行切片并用 \n 连接
-    return '\n'.join([text[i:i+width] for i in range(0, len(text), width)])
 
+    # 1. 先进行字符切片 (每 12 个字符)
+    segments = [text[i:i+width] for i in range(0, len(text), width)]
+
+    # 2. 用 HTML <br> 标签连接
+    return '<br>'.join(segments)
 @st.cache_resource(ttl=3600) # 缓存连接
 def get_sheets_client():
     try:
@@ -160,15 +163,15 @@ st.title("🇯🇵 日语语法伴侣 (云同步 AI Pro)")
 
 st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称 (用于历史记录):", value=st.session_state['user_id'])
 
-# 🌟 调整列配置：移除宽度，仅使用 TextColumn 来确保 \n 渲染
+# 保持 COLUMN_CONFIG 简单（使用 st.column_config.Column 来避免 TextColumn 干扰）
 COLUMN_CONFIG = {
     "word": "部分 (日文)",
     "reading": "读音 (罗马字)",
-    "pos_meaning": st.column_config.TextColumn("品词 / 意味"), 
-    "grammar": st.column_config.TextColumn("语法说明"),
+    # 换行是通过 wrap_text 函数注入的 HTML <br> 标签实现
+    "pos_meaning": "品词 / 意味", 
+    "grammar": "语法说明",
     "standard": "标准形式"
 }
-
 
 # 输入区
 with st.container():
@@ -243,3 +246,4 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
 else:
     st.info("历史记录加载失败或表格为空。请检查 Google Sheets 共享设置和配置。")
+
