@@ -1,4 +1,6 @@
 streamlit
 pandas
 google-generativeai
-pytz  <--- 新增
+pytz
+gspread
+gspread-dataframe
