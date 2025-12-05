@@ -161,7 +161,10 @@ def update_selections():
     history_df = load_history() 
     search_query = st.session_state.get('search_query', '')
     if search_query:
-        filtered_df = history_df[history_df['sentence'].str.contains(search_query, case=False, na=False)]
+        filtered_df = history_df[
+            history_df['sentence'].str.contains(search_query, case=False, na=False) | 
+            (history_df['data'].astype(str).str.contains(search_query, case=False, na=False))
+        ]
     else:
         filtered_df = history_df
         
@@ -188,10 +191,12 @@ def bulk_delete_callback(timestamps_to_delete):
         st.session_state.select_all = False
         st.session_state.delete_selections = {}
         
-        # 清除缓存和重新运行
+        # 清除缓存。
         time.sleep(1) 
         load_history.clear()
-        st.rerun() 
+        
+        # ⚠️ 移除 st.rerun()。回调结束后 Streamlit 会自动重跑，避免警告。
+        # st.rerun() 
 
 
 # --- 4. 核心功能：AI 分析 (升级版) ---
@@ -348,7 +353,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 执行过滤
     if search_query:
-        # 使用 str.contains 确保搜索结果更灵活
+        # 搜索逻辑：支持搜索原文和解析后的数据（如翻译、笔记等）
         filtered_df = history_df[
             history_df['sentence'].str.contains(search_query, case=False, na=False) | 
             (history_df['data'].astype(str).str.contains(search_query, case=False, na=False))
@@ -378,7 +383,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             "🗑️ 批量删除选中项", 
             type="primary", 
             key="bulk_delete_main_btn",
-            on_click=bulk_delete_callback,  # 调用新的回调函数
+            on_click=bulk_delete_callback,  # 调用回调函数
             args=(timestamps_to_delete,)    # 传递需要删除的列表
         )
 
