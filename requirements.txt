@@ -4,3 +4,4 @@ google-generativeai
 pytz
 gspread
 gspread-dataframe
+gTTS
