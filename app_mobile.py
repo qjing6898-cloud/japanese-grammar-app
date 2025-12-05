@@ -199,23 +199,28 @@ def text_to_speech(text, lang_name):
         print(f"TTS Error: {e}")
         return None
 
-# --- 4. 核心功能：AI 分析 ---
+# --- 4. 核心功能：AI 分析 (新增 Correction) ---
 def analyze_with_ai(text):
+    # 🌟 实用功能一：新增语法纠错和润色要求
     prompt = f"""
     请作为一位精通全球语言的语言学专家，分析以下文本：
     “{text}”
     
     请执行以下步骤：
     1. **自动识别** 输入文本的语言（例如：日语、英语、法语、韩语、中文、西班牙语等）。
-    2. 将文本翻译成流畅的 **中文（简体）**。
-    3. 分析文本中的语气、惯用语、语法结构或断句逻辑。
-    4. 对文本进行逐词/逐结构拆解分析。
+    2. **检查和润色：** 检查原文是否有语法错误、表达不自然或不地道的地方。
+        - 如果有错误或不地道，请提供一个**完全修正且地道的版本**。
+        - 如果原文完美或非常地道，请返回原文。
+    3. 将文本翻译成流畅的 **中文（简体）**。
+    4. 分析文本中的语气、惯用语、语法结构或断句逻辑。
+    5. 对文本进行逐词/逐结构拆解分析。
 
-    请输出一个严格的 JSON 格式对象，包含以下四个字段：
+    请输出一个严格的 JSON 格式对象，包含以下五个字段：
     1. "language": 识别出的语言名称 (字符串，例如 "英语", "日语")。
-    2. "translation": 中文翻译。
-    3. "nuances": 详细的语法笔记、惯用语解释或文化背景说明。
-    4. "structure": 一个列表，包含逐词拆解，每个元素包含：
+    2. "correction": **修正/润色后的版本** (如果原文无错，则返回原文)。
+    3. "translation": 中文翻译。
+    4. "nuances": 详细的语法笔记、惯用语解释或文化背景说明。
+    5. "structure": 一个列表，包含逐词拆解，每个元素包含：
        - "word": 原文单词/词组
        - "reading": 发音注音 (英语请提供IPA音标，日语提供罗马音，中文提供拼音)
        - "pos_meaning": 词性及中文含义
@@ -249,17 +254,12 @@ st.set_page_config(
 # 时尚的 UI 样式
 st.markdown("""
 <style>
-    /* 隐藏默认菜单 */
     #MainMenu {visibility: hidden;}
-    /* 修复侧边栏问题：删除 header {visibility: hidden;} */
     footer {visibility: hidden;}
     
-    /* 表格自动换行 */
     td { white-space: normal !important; word-wrap: break-word !important; }
     
-    /* 卡片式设计 */
     .stApp { background-color: #fafafa; }
-    /* 这针对主内容容器，增加阴影和圆角 */
     .main .block-container { 
         background-color: #ffffff; 
         padding: 2rem; 
@@ -267,7 +267,6 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
     }
     
-    /* 语言标签 */
     .lang-tag {
         background-color: #e3f2fd;
         color: #1976d2;
@@ -279,10 +278,8 @@ st.markdown("""
         display: inline-block;
     }
     
-    /* 翻译框优化 */
     .trans-text { font-size: 18px; color: #333; line-height: 1.6; }
     
-    /* 语法笔记 */
     .nuance-box {
         background-color: #fff8e1;
         border-left: 4px solid #ffc107;
@@ -290,6 +287,15 @@ st.markdown("""
         border-radius: 4px;
         color: #5d4037;
     }
+    /* 🌟 新增：修正框样式 */
+    .correction-box {
+        background-color: #e6ffe6; /* 浅绿色背景 */
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 15px;
+        border: 1px solid #4CAF50;
+    }
+    .correction-box strong { color: #2E7D32; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -305,7 +311,6 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("📊 学习仪表盘")
     
-    # 实时统计
     hist_df_stats = load_history()
     if not hist_df_stats.empty:
         total_queries = len(hist_df_stats)
@@ -338,7 +343,7 @@ with st.container():
         if not sentence:
             st.toast("⚠️ 请先输入句子！", icon="✍️")
         else:
-            with st.spinner('🤖 AI 正在识别语言、生成发音并拆解语法...'):
+            with st.spinner('🤖 AI 正在识别语言、检查错误并拆解语法...'):
                 ai_result = analyze_with_ai(sentence)
                 
                 if "error" in ai_result:
@@ -353,6 +358,8 @@ with st.container():
                     st.markdown("###")
                     
                     lang_name = ai_result.get('language', '英语')
+                    correction = ai_result.get('correction', sentence) # 🌟 实用功能一
+                    
                     audio_fp = text_to_speech(sentence, lang_name)
                     
                     # 顶部基本信息卡片
@@ -370,6 +377,22 @@ with st.container():
                     tab1, tab2, tab3 = st.tabs(["📝 翻译与笔记", "🧩 结构拆解", "🔍 原始数据"])
                     
                     with tab1:
+                        # 🌟 实用功能一：纠错结果展示
+                        if correction != sentence:
+                            st.markdown(f"""
+                            <div class="correction-box">
+                                <strong>⚠️ 修正/润色后的版本:</strong><br>{correction}
+                                <br><br>
+                                <strong>原文:</strong><br><del style="color: grey;">{sentence}</del>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                             st.markdown(f"""
+                            <div class="correction-box">
+                                <strong>✅ 恭喜!</strong><br>您的句子表达自然且准确。
+                            </div>
+                            """, unsafe_allow_html=True)
+
                         st.markdown("#### 🇨🇳 中文翻译")
                         st.markdown(f"<div class='trans-text'>{ai_result.get('translation', '')}</div>", unsafe_allow_html=True)
                         
@@ -394,7 +417,7 @@ with st.container():
 
 st.divider()
 
-# --- 7. 学习足迹 ---
+# --- 7. 学习足迹 (新增复习模式) ---
 st.subheader("📚 学习足迹")
 
 # 初始化 session_state
@@ -406,18 +429,22 @@ if 'search_query' not in st.session_state:
     st.session_state.search_query = ''
 if 'filter_language' not in st.session_state:
     st.session_state.filter_language = None
+# 🌟 实用功能二：复习模式状态
+if 'review_mode' not in st.session_state:
+    st.session_state.review_mode = False
 
 # 加载数据
 history_df = load_history()
 
 if not history_df.empty and 'timestamp' in history_df.columns:
     
-    # 顶部工具栏：筛选 + 导出
-    col_filter, col_export = st.columns([0.8, 0.2])
+    # 顶部工具栏：筛选 + 复习模式 + 导出
+    col_filter, col_review, col_export = st.columns([0.6, 0.2, 0.2])
     
     with col_filter:
         available_languages = history_df['language'].unique().tolist()
         if len(available_languages) > 0:
+            st.markdown("##### 语言筛选")
             cols = st.columns(len(available_languages) + 1)
             def set_lang_filter(lang):
                 if st.session_state.filter_language == lang:
@@ -432,14 +459,21 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                 if cols[i].button(lang, key=f"filter_btn_{lang}", type=btn_type):
                     set_lang_filter(lang)
                     st.rerun()
+
+    with col_review:
+        # 🌟 实用功能二：复习模式开关
+        st.markdown("##### 复习模式")
+        st.checkbox("开启闪卡", key='review_mode', value=st.session_state.review_mode)
     
     with col_export:
+        st.markdown("##### 导出数据")
         csv = history_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
             label="📥 导出 CSV",
             data=csv,
             file_name=f'learning_history_{datetime.now().strftime("%Y%m%d")}.csv',
             mime='text/csv',
+            use_container_width=True
         )
 
     # 执行过滤
@@ -478,8 +512,13 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     else:
         for index, item in filtered_df.iterrows():
             timestamp = item['timestamp']
-            display_sentence = item['sentence'][:30] + '...' if len(item['sentence']) > 30 else item['sentence']
             lang_label = item.get('language', '未知')
+            
+            # 复习模式下，只显示句子，不进行截断
+            if st.session_state.review_mode:
+                 display_sentence = item['sentence']
+            else:
+                 display_sentence = item['sentence'][:30] + '...' if len(item['sentence']) > 30 else item['sentence']
             
             with st.container():
                 c_check, c_content = st.columns([0.05, 0.95])
@@ -491,28 +530,68 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                     st.checkbox("", key=checkbox_key, on_change=update_individual_selection, args=(timestamp,), label_visibility="hidden")
                 
                 with c_content:
-                    with st.expander(f"[{lang_label}] {display_sentence}"):
-                        st.caption(f"🕒 {timestamp} | 👤 {item['user']}")
-                        
-                        data = item.get('data', {})
-                        if data and "structure" in data:
-                            if st.button("🔊 朗读", key=f"tts_{timestamp}"):
-                                audio_bytes = text_to_speech(item['sentence'], lang_label)
-                                if audio_bytes:
-                                    st.audio(audio_bytes.getvalue(), format='audio/mp3')
-                                else:
-                                    st.toast("🔊 移动端播放失败。", icon="⚠️")
-
-                            st.markdown(f"**翻译：** {data.get('translation', '')}")
+                    # 🌟 复习模式下的 Expander 标题
+                    expander_label = f"[{lang_label}] {display_sentence}"
+                    
+                    # 🌟 实用功能二：复习模式内容控制
+                    if st.session_state.review_mode:
+                        # 复习模式下，默认折叠，只显示原文
+                        with st.expander(expander_label):
+                            # 使用 session state 动态控制答案显示
+                            reveal_key = f'reveal_{timestamp}'
+                            if reveal_key not in st.session_state:
+                                st.session_state[reveal_key] = False
+                                
+                            if st.session_state[reveal_key]:
+                                st.button("隐藏答案", key=f'hide_btn_{timestamp}', on_click=lambda: st.session_state.update({reveal_key: False}))
+                                show_answer = True
+                            else:
+                                st.button("显示答案", key=f'show_btn_{timestamp}', type="primary", on_click=lambda: st.session_state.update({reveal_key: True}))
+                                show_answer = False
                             
-                            h_tab1, h_tab2 = st.tabs(["结构表", "笔记"])
-                            with h_tab1:
-                                h_df = pd.DataFrame(data['structure'])
-                                st.table(h_df.rename(columns=COLUMN_MAPPING))
-                            with h_tab2:
-                                st.info(data.get('nuances', '无笔记'))
-                        else:
-                            st.warning("数据无法解析")
+                            st.markdown("---")
+                            
+                            if show_answer:
+                                st.caption(f"👤 {item['user']} | 🕒 {timestamp}")
+                                data = item.get('data', {})
+                                if data and "structure" in data:
+                                    st.markdown(f"**翻译：** {data.get('translation', '')}")
+                                    h_tab1, h_tab2 = st.tabs(["结构表", "笔记"])
+                                    with h_tab1:
+                                        h_df = pd.DataFrame(data['structure'])
+                                        st.table(h_df.rename(columns=COLUMN_MAPPING))
+                                    with h_tab2:
+                                        st.info(data.get('nuances', '无笔记'))
+                                else:
+                                    st.warning("数据无法解析")
+                    else:
+                        # 正常模式下，展开即显示所有内容
+                        with st.expander(expander_label):
+                            st.caption(f"🕒 {timestamp} | 👤 {item['user']}")
+                            data = item.get('data', {})
+                            if data and "structure" in data:
+                                if st.button("🔊 朗读", key=f"tts_{timestamp}"):
+                                    audio_bytes = text_to_speech(item['sentence'], lang_label)
+                                    if audio_bytes:
+                                        st.audio(audio_bytes.getvalue(), format='audio/mp3')
+                                    else:
+                                        st.toast("🔊 移动端播放失败。", icon="⚠️")
+
+                                st.markdown(f"**翻译：** {data.get('translation', '')}")
+                                
+                                # 🌟 修正对比（历史记录）
+                                correction_hist = data.get('correction', item['sentence'])
+                                if correction_hist != item['sentence']:
+                                    st.info(f"💡 **修正版本:** {correction_hist}")
+
+                                h_tab1, h_tab2 = st.tabs(["结构表", "笔记"])
+                                with h_tab1:
+                                    h_df = pd.DataFrame(data['structure'])
+                                    st.table(h_df.rename(columns=COLUMN_MAPPING))
+                                with h_tab2:
+                                    st.info(data.get('nuances', '无笔记'))
+                            else:
+                                st.warning("数据无法解析")
 
 else:
     st.info("🌟 欢迎使用！输入第一个句子开始你的语言之旅吧！")
