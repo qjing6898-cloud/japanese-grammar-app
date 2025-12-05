@@ -46,13 +46,13 @@ def get_sheets_client():
 @st.cache_data(ttl=60) 
 def load_history():
     """从 Google Sheets 读取历史记录"""
-    # ... (函数体内容保持不变)
     gc = get_sheets_client()
     if not gc: return pd.DataFrame()
     
     try:
         spreadsheet = gc.open_by_url(SHEET_URL)
         worksheet = spreadsheet.sheet1
+        # 使用 get_all_records() 时，表头必须一致
         df = pd.DataFrame(worksheet.get_all_records())
         
         if 'data_json' in df.columns:
@@ -64,7 +64,6 @@ def load_history():
         st.warning(f"Google 表格 '{SHEET_TITLE}' 不存在或无访问权限。")
         return pd.DataFrame()
     except Exception as e:
-        # 注意：这里我们保留了原始的错误捕获，但现在应用了缓存
         st.error(f"加载历史记录失败: {e}") 
         return pd.DataFrame()
 
@@ -89,37 +88,105 @@ def save_record(sentence, result_data):
         ]
         
         if not worksheet.row_values(1):
+            # 确保第一行是表头
             worksheet.append_row(['timestamp', 'sentence', 'data_json', 'user'])
 
         worksheet.append_row(new_row)
     except Exception as e:
         st.error(f"保存记录到 Google Sheets 失败: {e}")
 
-def delete_record(timestamp_to_delete):
-    """根据时间戳删除 Google Sheets 中的记录"""
+# 🌟 修复 NameError：添加 delete_records_by_bulk 函数
+def delete_records_by_bulk(timestamps_list):
+    """根据时间戳列表批量删除 Google Sheets 中的记录"""
     gc = get_sheets_client()
-    if not gc: return False
+    if not gc or not timestamps_list: return False
     
     try:
         spreadsheet = gc.open_by_url(SHEET_URL)
         worksheet = spreadsheet.sheet1
         
-        # 获取第一列（时间戳列）的所有值
-        timestamps = worksheet.col_values(1)
+        timestamps_col = worksheet.col_values(1)
         
-        # 查找要删除的时间戳所在的行号 (注意：gspread行号从1开始，且列表索引从0开始)
-        try:
-            # timestamps列表包含表头，所以索引要小心处理
-            row_index = timestamps.index(timestamp_to_delete) + 1
-            worksheet.delete_rows(row_index)
-            return True
-        except ValueError:
-            st.error("未找到对应记录，可能已被删除。")
+        rows_to_delete = []
+        for ts in timestamps_list:
+            try:
+                # 查找时间戳所在的行号 (gspread 行号从1开始)
+                # timestamps_col 包含表头，所以 index() 返回的索引 i 对应 gspread 行号 i+1
+                row_index = timestamps_col.index(ts) + 1
+                rows_to_delete.append(row_index)
+            except ValueError:
+                continue
+        
+        if not rows_to_delete:
+            st.warning("未找到要删除的记录。")
             return False
+
+        # 核心：按行号从大到小排序，确保先删除靠后的行，防止行索引错乱
+        rows_to_delete.sort(reverse=True)
+        
+        success_count = 0
+        for row_idx in rows_to_delete:
+            worksheet.delete_rows(row_idx)
+            success_count += 1
+        
+        st.success(f"成功删除 {success_count} 条记录。")
+        return True
             
     except Exception as e:
-        st.error(f"删除失败: {e}")
+        st.error(f"批量删除失败: {e}")
         return False
+
+# 列名映射
+COLUMN_MAPPING = {
+    "word": "单词",
+    "reading": "读音",
+    "pos_meaning": "品词 / 意味", 
+    "grammar": "语法说明",
+    "standard": "标准形式"
+}
+
+# --- 辅助函数：状态同步 ---
+# 修复：移除对 filtered_df 的参数依赖，因为 filtered_df 在 main body 中定义，在回调中可引用
+# 为了让回调函数能正常工作，我们需要在回调函数内部处理所需的 dataframe。
+# 这里我们假设 filtered_df 在全局范围内（或 Streamlit run 的过程中）是可访问的。
+
+def update_individual_selection(ts):
+    """当单个复选框被点击时调用，更新全局选中字典，并检查是否需要取消“全选”状态"""
+    checkbox_key = f"sel_{ts}"
+    is_checked = st.session_state[checkbox_key] 
+    
+    st.session_state.delete_selections[ts] = is_checked
+
+    # 如果取消勾选了任一记录，则取消“全选”状态
+    if not is_checked and st.session_state.select_all:
+        st.session_state.select_all = False
+
+def update_selections():
+    """当点击全选时调用，强制更新所有可见记录的选中状态"""
+    select_all_state = st.session_state.select_all
+    
+    # ⚠️ 注意：这里需要重新获取 filtered_df 的数据，因为回调函数是在主脚本外部执行的。
+    # 最简单的方法是使用 load_history() 并重新过滤，但为了避免重复代码，
+    # 我们假设 filtered_df 对应的所有时间戳在当前运行环境中是可确定的。
+    
+    # 由于 filtered_df 是在 main body 中计算的，我们在这里需要使用 history_df 并重新过滤。
+    # 考虑到性能和 Streamlit 的运行机制，我们只对当前加载的 history_df 进行过滤。
+    history_df = load_history() # 使用缓存的历史记录
+
+    # 重新应用搜索过滤 (需要从 session state 获取搜索查询)
+    search_query = st.session_state.get('search_query', '')
+    if search_query:
+        filtered_df = history_df[history_df['sentence'].str.contains(search_query, case=False, na=False)]
+    else:
+        filtered_df = history_df
+        
+    # 遍历当前筛选后的所有时间戳
+    for ts in filtered_df['timestamp']:
+        # 1. 更新全局选中字典
+        st.session_state.delete_selections[ts] = select_all_state
+        # 2. 🌟 强制更新复选框的 Streamlit 内部状态 (确保 visual update)
+        st.session_state[f"sel_{ts}"] = select_all_state
+
 
 # --- 3. 页面配置 ---
 st.set_page_config(
@@ -161,83 +228,7 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 if 'user_id' not in st.session_state:
     st.session_state['user_id'] = '用户A'
 
-# --- 4. 核心功能：AI 分析 (升级版) ---
-def analyze_with_ai(text):
-    # 🌟 提示词升级：增加翻译和语法应用
-    prompt = f"""
-    请作为一位专业的日语老师，分析以下日语句子：
-    “{text}”
-    
-    请输出一个严格的 JSON 格式对象，包含以下三个字段：
-    1. "translation": 句子的中文翻译。
-    2. "nuances": 一个字符串，详细解释句子中的惯用语、语气、断句逻辑或特定语法应用（类似“语法笔记”）。
-    3. "structure": 一个列表，包含逐词拆解，每个元素包含：
-       - "word": 原文单词
-       - "reading": 罗马音
-       - "pos_meaning": 词性及中文含义
-       - "grammar": 简短语法说明
-       - "standard": 标准形式
-
-    示例 JSON 结构:
-    {{
-        "translation": "中文翻译...",
-        "nuances": "这里使用了...的惯用型...",
-        "structure": [
-            {{ "word": "...", "reading": "...", "pos_meaning": "...", "grammar": "...", "standard": "..." }}
-        ]
-    }}
-
-    请确保输出是合法的 JSON 格式，不要包含 Markdown 标记。
-    """
-    
-    try:
-        response = model.generate_content(prompt)
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
-        result = json.loads(clean_text)
-        
-        # 简单验证结构
-        if "structure" not in result or "translation" not in result:
-             return {"error": "AI返回格式不完整", "structure": []}
-            
-        return result
-        
-    except Exception as e:
-        return {"error": f"AI分析失败: {e}", "structure": []}
-
-# 列名映射
-COLUMN_MAPPING = {
-    "word": "单词",
-    "reading": "读音",
-    "pos_meaning": "品词 / 意味", 
-    "grammar": "语法说明",
-    "standard": "标准形式"
-}
-
-# --- 辅助函数：状态同步 ---
-def update_individual_selection(ts):
-    """当单个复选框被点击时调用，更新全局选中字典，并检查是否需要取消“全选”状态"""
-    checkbox_key = f"sel_{ts}"
-    # 从 Streamlit 内部状态获取当前复选框的值
-    is_checked = st.session_state[checkbox_key] 
-    
-    # 更新全局选中字典
-    st.session_state.delete_selections[ts] = is_checked
-
-    # 如果取消勾选了任一记录，则取消“全选”状态
-    if not is_checked and st.session_state.select_all:
-        st.session_state.select_all = False
-
-def update_selections(filtered_df):
-    """当点击全选时调用，强制更新所有可见记录的选中状态"""
-    select_all_state = st.session_state.select_all
-    # 遍历当前筛选后的所有时间戳
-    for ts in filtered_df['timestamp']:
-        # 1. 更新全局选中字典
-        st.session_state.delete_selections[ts] = select_all_state
-        # 2. 🌟 强制更新复选框的 Streamlit 内部状态 (确保 visual update)
-        st.session_state[f"sel_{ts}"] = select_all_state
-
-# --- 5. 界面 UI (保持不变) ---
+# --- 5. 界面 UI ---
 st.title("🇯🇵 日语语法伴侣 (Pro Max)")
 
 st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称:", value=st.session_state['user_id'])
@@ -249,7 +240,6 @@ with st.container():
     if st.button("✨ AI 深度解析", type="primary"):
         if not sentence:
             st.warning("请输入句子")
-        # ... (解析逻辑保持不变)
         else:
             with st.spinner('AI 老师正在翻译和拆解 (约需5秒)...'):
                 ai_result = analyze_with_ai(sentence)
@@ -290,6 +280,9 @@ if 'select_all' not in st.session_state:
     st.session_state.select_all = False
 if 'delete_selections' not in st.session_state:
     st.session_state.delete_selections = {}
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ''
+
 
 # 加载数据
 history_df = load_history()
@@ -297,7 +290,12 @@ history_df = load_history()
 if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 搜索框架
-    search_query = st.text_input("🔍 搜索历史记录 (输入关键词):", placeholder="输入日语或翻译关键词...")
+    # 使用 session_state key 绑定输入框，便于在回调函数中访问
+    search_query = st.text_input(
+        "🔍 搜索历史记录 (输入关键词):", 
+        placeholder="输入日语或翻译关键词...",
+        key='search_query' # 绑定到 session state
+    )
     
     # 执行过滤
     if search_query:
@@ -313,9 +311,8 @@ if not history_df.empty and 'timestamp' in history_df.columns:
         col_select.checkbox(
             "全选",
             key="select_all",
-            # 传递 filtered_df 给回调函数，以便知道要更新哪些记录
-            on_change=update_selections,
-            args=(filtered_df,) 
+            # 回调函数 now takes no args
+            on_change=update_selections
         )
 
         if col_delete_btn.button("🗑️ 批量删除选中项", type="primary", key="bulk_delete_main_btn"):
@@ -333,6 +330,8 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                         st.session_state.select_all = False
                         st.session_state.delete_selections = {}
                         time.sleep(1) 
+                        # 强制清除 load_history 的缓存，确保刷新后数据是最新的
+                        load_history.clear()
                         st.rerun() 
                     else:
                         st.error("批量删除操作失败。")
@@ -353,11 +352,8 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             col_check, col_expander = st.columns([0.05, 0.95])
             
             with col_check:
-                # 🌟 关键：复选框的定义现在更加健壮
                 checkbox_key = f"sel_{timestamp}"
                 
-                # 1. 设置 value：确保复选框的初始显示值来自于全局状态字典
-                # 2. 设置 on_change：确保手动点击时，状态能够反向同步给全局状态，并检查是否需要取消全选
                 st.checkbox(
                     label="", 
                     key=checkbox_key, 
@@ -388,4 +384,4 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                         st.warning("⚠️ 旧数据或解析失败，无法显示详细内容")
 
 else:
-    st.info("还没有学习记录，快去解析第一句日语吧！")
+    st
