@@ -243,7 +243,6 @@ st.set_page_config(
     page_title="全能语言伴侣",
     page_icon="🌍",
     layout="centered",
-    # 修复 1：侧边栏默认展开
     initial_sidebar_state="expanded" 
 )
 
@@ -252,7 +251,7 @@ st.markdown("""
 <style>
     /* 隐藏默认菜单 */
     #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
+    /* 修复侧边栏问题：删除 header {visibility: hidden;} */
     footer {visibility: hidden;}
     
     /* 表格自动换行 */
@@ -260,7 +259,13 @@ st.markdown("""
     
     /* 卡片式设计 */
     .stApp { background-color: #fafafa; }
-    .css-1r6slb0 { background-color: #ffffff; padding: 2rem; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    /* 这针对主内容容器，增加阴影和圆角 */
+    .main .block-container { 
+        background-color: #ffffff; 
+        padding: 2rem; 
+        border-radius: 15px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
+    }
     
     /* 语言标签 */
     .lang-tag {
@@ -357,7 +362,6 @@ with st.container():
                             st.markdown(f"<span class='lang-tag'>{lang_name}</span>", unsafe_allow_html=True)
                         with c_audio:
                             if audio_fp:
-                                # 修复 2：虽然无法根本解决移动端兼容性，但确保格式正确
                                 st.audio(audio_fp.getvalue(), format='audio/mp3')
                             else:
                                 st.warning("🔊 无法生成或播放音频，请检查网络或更换移动浏览器。")
@@ -495,7 +499,6 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                             if st.button("🔊 朗读", key=f"tts_{timestamp}"):
                                 audio_bytes = text_to_speech(item['sentence'], lang_label)
                                 if audio_bytes:
-                                    # 修复 2：尝试用 getvalue() 确保数据流完整
                                     st.audio(audio_bytes.getvalue(), format='audio/mp3')
                                 else:
                                     st.toast("🔊 移动端播放失败。", icon="⚠️")
