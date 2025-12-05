@@ -91,7 +91,7 @@ def save_record(sentence, result_data):
     except Exception as e:
         st.error(f"保存记录到 Google Sheets 失败: {e}")
 
-# 🌟 批量删除函数
+# 批量删除函数
 def delete_records_by_bulk(timestamps_list):
     """根据时间戳列表批量删除 Google Sheets 中的记录"""
     gc = get_sheets_client()
@@ -170,7 +170,28 @@ def update_selections():
         # 1. 更新全局选中字典
         st.session_state.delete_selections[ts] = select_all_state
         # 2. 强制更新复选框的 Streamlit 内部状态 (确保 visual update)
-        st.session_state[f"sel_{ts}"] = select_all_state
+        if f"sel_{ts}" in st.session_state:
+            st.session_state[f"sel_{ts}"] = select_all_state
+
+# 修复 StreamlitAPIException：使用回调函数处理删除和重置状态
+def bulk_delete_callback(timestamps_to_delete):
+    """
+    删除按钮的实际回调函数，处理删除、状态重置和页面刷新。
+    """
+    if not timestamps_to_delete:
+        st.warning("请至少选择一条记录进行删除。")
+        return
+
+    # 尝试执行批量删除
+    if delete_records_by_bulk(timestamps_to_delete):
+        # 成功后，在回调中安全地重置状态
+        st.session_state.select_all = False
+        st.session_state.delete_selections = {}
+        
+        # 清除缓存和重新运行
+        time.sleep(1) 
+        load_history.clear()
+        st.rerun() 
 
 
 # --- 4. 核心功能：AI 分析 (升级版) ---
@@ -275,6 +296,9 @@ with st.container():
                 else:
                     save_record(sentence, ai_result)
                     
+                    # 🌟 关键修复：清除历史记录缓存，确保下次加载时包含新记录
+                    load_history.clear()
+                    
                     st.success("解析完成！")
                     
                     st.markdown(f"""
@@ -324,7 +348,11 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 执行过滤
     if search_query:
-        filtered_df = history_df[history_df['sentence'].str.contains(search_query, case=False, na=False)]
+        # 使用 str.contains 确保搜索结果更灵活
+        filtered_df = history_df[
+            history_df['sentence'].str.contains(search_query, case=False, na=False) | 
+            (history_df['data'].astype(str).str.contains(search_query, case=False, na=False))
+        ]
     else:
         filtered_df = history_df
 
@@ -339,28 +367,20 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             on_change=update_selections
         )
 
-        if col_delete_btn.button("🗑️ 批量删除选中项", type="primary", key="bulk_delete_main_btn"):
-            
-            # 收集所有被选中的时间戳
-            timestamps_to_delete = [
-                ts for ts, is_checked in st.session_state.delete_selections.items() 
-                if is_checked and ts in filtered_df['timestamp'].values
-            ]
-
-            if timestamps_to_delete:
-                with st.spinner("批量删除中，请稍候..."):
-                    if delete_records_by_bulk(timestamps_to_delete):
-                        # 删除成功后，重置状态、清除缓存并刷新
-                        st.session_state.select_all = False
-                        st.session_state.delete_selections = {}
-                        
-                        time.sleep(1) 
-                        load_history.clear()
-                        st.rerun() 
-                    else:
-                        st.error("批量删除操作失败。")
-            else:
-                st.warning("请至少选择一条记录进行删除。")
+        # 在按钮点击前，计算需要删除的时间戳列表
+        timestamps_to_delete = [
+            ts for ts, is_checked in st.session_state.delete_selections.items() 
+            if is_checked and ts in filtered_df['timestamp'].values
+        ]
+        
+        # 🌟 关键修改：按钮使用 on_click 触发回调函数
+        col_delete_btn.button(
+            "🗑️ 批量删除选中项", 
+            type="primary", 
+            key="bulk_delete_main_btn",
+            on_click=bulk_delete_callback,  # 调用新的回调函数
+            args=(timestamps_to_delete,)    # 传递需要删除的列表
+        )
 
     # --- 显示记录 ---
     if filtered_df.empty and search_query:
@@ -378,6 +398,10 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             with col_check:
                 checkbox_key = f"sel_{timestamp}"
                 
+                # 确保每次循环都创建 checkbox key，以防 update_selections 找不到
+                if checkbox_key not in st.session_state:
+                    st.session_state[checkbox_key] = st.session_state.delete_selections.get(timestamp, False)
+
                 st.checkbox(
                     label="", 
                     key=checkbox_key, 
