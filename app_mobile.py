@@ -213,7 +213,31 @@ COLUMN_MAPPING = {
     "standard": "标准形式"
 }
 
-# --- 5. 界面 UI ---
+# --- 辅助函数：状态同步 ---
+def update_individual_selection(ts):
+    """当单个复选框被点击时调用，更新全局选中字典，并检查是否需要取消“全选”状态"""
+    checkbox_key = f"sel_{ts}"
+    # 从 Streamlit 内部状态获取当前复选框的值
+    is_checked = st.session_state[checkbox_key] 
+    
+    # 更新全局选中字典
+    st.session_state.delete_selections[ts] = is_checked
+
+    # 如果取消勾选了任一记录，则取消“全选”状态
+    if not is_checked and st.session_state.select_all:
+        st.session_state.select_all = False
+
+def update_selections(filtered_df):
+    """当点击全选时调用，强制更新所有可见记录的选中状态"""
+    select_all_state = st.session_state.select_all
+    # 遍历当前筛选后的所有时间戳
+    for ts in filtered_df['timestamp']:
+        # 1. 更新全局选中字典
+        st.session_state.delete_selections[ts] = select_all_state
+        # 2. 🌟 强制更新复选框的 Streamlit 内部状态 (确保 visual update)
+        st.session_state[f"sel_{ts}"] = select_all_state
+
+# --- 5. 界面 UI (保持不变) ---
 st.title("🇯🇵 日语语法伴侣 (Pro Max)")
 
 st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称:", value=st.session_state['user_id'])
@@ -225,6 +249,7 @@ with st.container():
     if st.button("✨ AI 深度解析", type="primary"):
         if not sentence:
             st.warning("请输入句子")
+        # ... (解析逻辑保持不变)
         else:
             with st.spinner('AI 老师正在翻译和拆解 (约需5秒)...'):
                 ai_result = analyze_with_ai(sentence)
@@ -276,32 +301,21 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 执行过滤
     if search_query:
-        # 模糊搜索：在句子列中查找
         filtered_df = history_df[history_df['sentence'].str.contains(search_query, case=False, na=False)]
     else:
         filtered_df = history_df
 
-    # ---------------------------------------------
-    # 批量删除按钮、全选/反选和处理逻辑
-    # ---------------------------------------------
-    
-    # 只有当筛选后的数据不为空时才显示删除按钮
+    # --- 批量删除按钮、全选/反选和处理逻辑 ---
     if not filtered_df.empty:
         col_select, col_delete_btn, col_placeholder = st.columns([0.15, 0.35, 0.5])
 
-        # 定义回调函数：当点击全选时，更新所有可见记录的选中状态
-        def update_selections():
-            # 获取全选按钮的新状态
-            select_all_state = st.session_state.select_all
-            # 遍历当前筛选后的所有时间戳
-            for ts in filtered_df['timestamp']:
-                st.session_state.delete_selections[ts] = select_all_state
-        
         # 🌟 全选/反选复选框
         col_select.checkbox(
             "全选",
             key="select_all",
-            on_change=update_selections
+            # 传递 filtered_df 给回调函数，以便知道要更新哪些记录
+            on_change=update_selections,
+            args=(filtered_df,) 
         )
 
         if col_delete_btn.button("🗑️ 批量删除选中项", type="primary", key="bulk_delete_main_btn"):
@@ -309,15 +323,13 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             # 从 session_state 中收集所有被选中的时间戳
             timestamps_to_delete = [
                 ts for ts, is_checked in st.session_state.delete_selections.items() 
-                # 必须确保该时间戳在当前的筛选结果中，防止删除已被筛选掉的记录
                 if is_checked and ts in filtered_df['timestamp'].values
             ]
 
             if timestamps_to_delete:
                 with st.spinner("批量删除中，请稍候..."):
-                    # 调用批量删除函数
                     if delete_records_by_bulk(timestamps_to_delete):
-                        # 成功删除后，重置全选状态，并刷新页面
+                        # 删除成功后，重置状态并刷新
                         st.session_state.select_all = False
                         st.session_state.delete_selections = {}
                         time.sleep(1) 
@@ -326,9 +338,8 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                         st.error("批量删除操作失败。")
             else:
                 st.warning("请至少选择一条记录进行删除。")
-    # ---------------------------------------------
 
-    # 显示记录
+    # --- 显示记录 ---
     if filtered_df.empty and search_query:
         st.info(f"没有找到与 '{search_query}' 匹配的记录。")
     elif filtered_df.empty:
@@ -339,20 +350,20 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             timestamp = item['timestamp']
             display_sentence = item['sentence'][:20] + '...' if len(item['sentence']) > 20 else item['sentence']
             
-            # 布局：左边是 checkbox，右边是 expander
             col_check, col_expander = st.columns([0.05, 0.95])
             
             with col_check:
-                # 🌟 批量删除：为每个记录添加复选框
+                # 🌟 关键：复选框的定义现在更加健壮
                 checkbox_key = f"sel_{timestamp}"
                 
-                # 初始化/更新 session state 字典中的该 key
-                # 注意：这里必须使用 value=st.session_state.delete_selections.get(timestamp, False) 
-                # 来保持状态，否则 state 会在每次循环中被重置
-                st.session_state.delete_selections[timestamp] = st.checkbox(
+                # 1. 设置 value：确保复选框的初始显示值来自于全局状态字典
+                # 2. 设置 on_change：确保手动点击时，状态能够反向同步给全局状态，并检查是否需要取消全选
+                st.checkbox(
                     label="", 
                     key=checkbox_key, 
                     value=st.session_state.delete_selections.get(timestamp, False),
+                    on_change=update_individual_selection,
+                    args=(timestamp,),
                     label_visibility="hidden"
                 )
 
@@ -378,4 +389,3 @@ if not history_df.empty and 'timestamp' in history_df.columns:
 
 else:
     st.info("还没有学习记录，快去解析第一句日语吧！")
-
