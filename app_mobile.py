@@ -6,12 +6,11 @@ import json
 import gspread
 import pytz 
 import time
-from gtts import gTTS # 引入语音库
+from gtts import gTTS 
 import io
 
 # --- 1. 配置你的 AI ---
 try:
-    # 从 Streamlit Cloud Secrets 安全读取 Key
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
@@ -22,10 +21,9 @@ except Exception as e:
 
 # --- 2. 数据库连接配置 (Google Sheets) ---
 SHEET_TITLE = "Japanese_Grammar_History"
-# ⚠️⚠️⚠️ 请保持你已经配置好的 Google Sheets 完整网址不变！
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xrXmiV5yEYIC4lDfgjk79vQDNVHYZugW6XUReZbHWjY/edit?gid=0#gid=0" 
 
-@st.cache_resource(ttl=3600) # 缓存连接
+@st.cache_resource(ttl=3600)
 def get_sheets_client():
     try:
         if "GCP_JSON_STRING" in st.secrets:
@@ -56,9 +54,7 @@ def load_history():
         df = pd.DataFrame(worksheet.get_all_records())
         
         if 'data_json' in df.columns:
-            # 解析 JSON 字符串
             df['data'] = df['data_json'].apply(lambda x: json.loads(x) if x else {})
-            # 提取语言字段
             df['language'] = df['data'].apply(lambda x: x.get('language', '日语') if isinstance(x, dict) else '未知')
             
         return df.iloc[::-1] # 倒序
@@ -96,7 +92,7 @@ def save_record(sentence, result_data):
     except Exception as e:
         st.error(f"保存记录到 Google Sheets 失败: {e}")
 
-# 批量删除函数
+
 def delete_records_by_bulk(timestamps_list):
     """根据时间戳列表批量删除 Google Sheets 中的记录"""
     gc = get_sheets_client()
@@ -120,7 +116,6 @@ def delete_records_by_bulk(timestamps_list):
             st.toast("⚠️ 未找到要删除的记录。", icon="⚠️")
             return False
 
-        # 核心：按行号从大到小排序
         rows_to_delete.sort(reverse=True)
         
         success_count = 0
@@ -148,7 +143,6 @@ COLUMN_MAPPING = {
 # --- 辅助函数：状态同步 ---
 
 def update_individual_selection(ts):
-    """当单个复选框被点击时调用"""
     checkbox_key = f"sel_{ts}"
     is_checked = st.session_state[checkbox_key] 
     st.session_state.delete_selections[ts] = is_checked
@@ -156,12 +150,10 @@ def update_individual_selection(ts):
         st.session_state.select_all = False
 
 def update_selections():
-    """当点击全选时调用"""
     select_all_state = st.session_state.select_all
     
     history_df = load_history() 
     
-    # 重新应用当前的过滤逻辑，确保全选只针对当前可见的记录
     filter_lang = st.session_state.get('filter_language', None)
     search_query = st.session_state.get('search_query', '')
     
@@ -180,7 +172,6 @@ def update_selections():
             st.session_state[f"sel_{ts}"] = select_all_state
 
 def bulk_delete_callback(timestamps_to_delete):
-    """删除按钮的回调函数"""
     if not timestamps_to_delete:
         st.toast("⚠️ 请至少选择一条记录进行删除。", icon="⚠️")
         return
@@ -190,16 +181,13 @@ def bulk_delete_callback(timestamps_to_delete):
         st.session_state.delete_selections = {}
         time.sleep(1) 
         load_history.clear()
-        # 回调结束后会自动刷新
 
 def text_to_speech(text, lang_name):
     """使用 gTTS 生成语音，返回音频字节流"""
-    # 简单的语言代码映射
     lang_map = {
         '英语': 'en', '日语': 'ja', '中文': 'zh-cn', '法语': 'fr', 
         '韩语': 'ko', '西班牙语': 'es', '德语': 'de', '俄语': 'ru', '意大利语': 'it'
     }
-    # 默认使用英语，如果匹配不到
     lang_code = lang_map.get(lang_name, 'en') 
     
     try:
@@ -255,7 +243,8 @@ st.set_page_config(
     page_title="全能语言伴侣",
     page_icon="🌍",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    # 修复 1：侧边栏默认展开
+    initial_sidebar_state="expanded" 
 )
 
 # 时尚的 UI 样式
@@ -351,14 +340,13 @@ with st.container():
                     st.error(ai_result["error"])
                 else:
                     save_record(sentence, ai_result)
-                    load_history.clear() # 清除缓存
+                    load_history.clear() 
                     
                     st.toast("✅ 解析完成！已保存到云端。", icon="🎉")
                     
                     # --- 结果展示区 (使用 Tabs 优化布局) ---
-                    st.markdown("###") # Spacer
+                    st.markdown("###")
                     
-                    # 生成语音
                     lang_name = ai_result.get('language', '英语')
                     audio_fp = text_to_speech(sentence, lang_name)
                     
@@ -369,9 +357,12 @@ with st.container():
                             st.markdown(f"<span class='lang-tag'>{lang_name}</span>", unsafe_allow_html=True)
                         with c_audio:
                             if audio_fp:
-                                st.audio(audio_fp, format='audio/mp3')
+                                # 修复 2：虽然无法根本解决移动端兼容性，但确保格式正确
+                                st.audio(audio_fp.getvalue(), format='audio/mp3')
+                            else:
+                                st.warning("🔊 无法生成或播放音频，请检查网络或更换移动浏览器。")
                     
-                    # 使用 Tabs 分页展示，界面更清爽
+                    # 使用 Tabs 分页展示
                     tab1, tab2, tab3 = st.tabs(["📝 翻译与笔记", "🧩 结构拆解", "🔍 原始数据"])
                     
                     with tab1:
@@ -399,7 +390,7 @@ with st.container():
 
 st.divider()
 
-# --- 7. 学习足迹 (升级版) ---
+# --- 7. 学习足迹 ---
 st.subheader("📚 学习足迹")
 
 # 初始化 session_state
@@ -417,14 +408,12 @@ history_df = load_history()
 
 if not history_df.empty and 'timestamp' in history_df.columns:
     
-    # 🌟 顶部工具栏：筛选 + 导出
+    # 顶部工具栏：筛选 + 导出
     col_filter, col_export = st.columns([0.8, 0.2])
     
     with col_filter:
-        # 语言筛选按钮
         available_languages = history_df['language'].unique().tolist()
         if len(available_languages) > 0:
-            # st.markdown("##### 语言筛选")
             cols = st.columns(len(available_languages) + 1)
             def set_lang_filter(lang):
                 if st.session_state.filter_language == lang:
@@ -441,8 +430,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                     st.rerun()
     
     with col_export:
-        # 🌟 导出功能
-        csv = history_df.to_csv(index=False).encode('utf-8-sig') # 解决中文乱码
+        csv = history_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
             label="📥 导出 CSV",
             data=csv,
@@ -450,7 +438,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             mime='text/csv',
         )
 
-    # 🌟 执行过滤
+    # 执行过滤
     filtered_df = history_df.copy()
     if st.session_state.filter_language:
         filtered_df = filtered_df[filtered_df['language'] == st.session_state.filter_language]
@@ -462,7 +450,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             (filtered_df['data'].astype(str).str.contains(search_query, case=False, na=False))
         ]
 
-    # --- 批量删除逻辑 ---
+    # 批量删除逻辑
     if not filtered_df.empty:
         c_sel, c_del, c_space = st.columns([0.15, 0.35, 0.5])
         c_sel.checkbox("全选", key="select_all", on_change=update_selections)
@@ -480,7 +468,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             args=(timestamps_to_delete,)
         )
 
-    # --- 列表显示 ---
+    # 列表显示
     if filtered_df.empty:
         st.info("📭 没有找到匹配的记录")
     else:
@@ -489,7 +477,6 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             display_sentence = item['sentence'][:30] + '...' if len(item['sentence']) > 30 else item['sentence']
             lang_label = item.get('language', '未知')
             
-            # 使用 container 增加卡片感
             with st.container():
                 c_check, c_content = st.columns([0.05, 0.95])
                 
@@ -505,15 +492,16 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                         
                         data = item.get('data', {})
                         if data and "structure" in data:
-                            # 这里也可以加 TTS
                             if st.button("🔊 朗读", key=f"tts_{timestamp}"):
                                 audio_bytes = text_to_speech(item['sentence'], lang_label)
                                 if audio_bytes:
-                                    st.audio(audio_bytes, format='audio/mp3')
+                                    # 修复 2：尝试用 getvalue() 确保数据流完整
+                                    st.audio(audio_bytes.getvalue(), format='audio/mp3')
+                                else:
+                                    st.toast("🔊 移动端播放失败。", icon="⚠️")
 
                             st.markdown(f"**翻译：** {data.get('translation', '')}")
                             
-                            # 简单的 Tab 布局用于历史记录
                             h_tab1, h_tab2 = st.tabs(["结构表", "笔记"])
                             with h_tab1:
                                 h_df = pd.DataFrame(data['structure'])
