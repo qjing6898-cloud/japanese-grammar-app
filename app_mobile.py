@@ -226,30 +226,25 @@ with st.container():
             with st.spinner('AI 老师正在翻译和拆解 (约需5秒)...'):
                 ai_result = analyze_with_ai(sentence)
                 
-                # 检查是否有错误
                 if "error" in ai_result:
                     st.error(ai_result["error"])
                 else:
-                    # 写入 Google Sheets
                     save_record(sentence, ai_result)
                     
                     st.success("解析完成！")
                     
-                    # 🌟 1. 显示中文翻译 (新增需求)
                     st.markdown(f"""
                     <div class="translation-box">
                         <b>🇨🇳 中文翻译：</b><br>{ai_result.get('translation', '')}
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # 🌟 2. 显示表格 (自动换行)
                     st.markdown("### 🧩 结构拆解")
                     df = pd.DataFrame(ai_result.get('structure', []))
                     if not df.empty:
                         df_display = df.rename(columns=COLUMN_MAPPING)
                         st.table(df_display)
 
-                    # 🌟 3. 显示语法/惯用语详解 (新增需求)
                     st.markdown(f"""
                     <div class="grammar-box">
                         <b>💡 语法笔记与惯用语：</b><br>
@@ -259,15 +254,21 @@ with st.container():
 
 st.divider()
 
-# --- 6. 学习足迹 (含搜索与删除) ---
+# --- 6. 学习足迹 (含搜索与批量删除) ---
 st.subheader("📚 学习足迹")
+
+# 初始化 session_state
+if 'select_all' not in st.session_state:
+    st.session_state.select_all = False
+if 'delete_selections' not in st.session_state:
+    st.session_state.delete_selections = {}
 
 # 加载数据
 history_df = load_history()
 
 if not history_df.empty and 'timestamp' in history_df.columns:
     
-    # 🌟 需求二：搜索框架
+    # 搜索框架
     search_query = st.text_input("🔍 搜索历史记录 (输入关键词):", placeholder="输入日语或翻译关键词...")
     
     # 执行过滤
@@ -277,52 +278,100 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     else:
         filtered_df = history_df
 
+    # ---------------------------------------------
+    # 批量删除按钮、全选/反选和处理逻辑
+    # ---------------------------------------------
+    
+    # 只有当筛选后的数据不为空时才显示删除按钮
+    if not filtered_df.empty:
+        col_select, col_delete_btn, col_placeholder = st.columns([0.15, 0.35, 0.5])
+
+        # 定义回调函数：当点击全选时，更新所有可见记录的选中状态
+        def update_selections():
+            # 获取全选按钮的新状态
+            select_all_state = st.session_state.select_all
+            # 遍历当前筛选后的所有时间戳
+            for ts in filtered_df['timestamp']:
+                st.session_state.delete_selections[ts] = select_all_state
+        
+        # 🌟 全选/反选复选框
+        col_select.checkbox(
+            "全选",
+            key="select_all",
+            on_change=update_selections
+        )
+
+        if col_delete_btn.button("🗑️ 批量删除选中项", type="primary", key="bulk_delete_main_btn"):
+            
+            # 从 session_state 中收集所有被选中的时间戳
+            timestamps_to_delete = [
+                ts for ts, is_checked in st.session_state.delete_selections.items() 
+                # 必须确保该时间戳在当前的筛选结果中，防止删除已被筛选掉的记录
+                if is_checked and ts in filtered_df['timestamp'].values
+            ]
+
+            if timestamps_to_delete:
+                with st.spinner("批量删除中，请稍候..."):
+                    # 调用批量删除函数
+                    if delete_records_by_bulk(timestamps_to_delete):
+                        # 成功删除后，重置全选状态，并刷新页面
+                        st.session_state.select_all = False
+                        st.session_state.delete_selections = {}
+                        time.sleep(1) 
+                        st.rerun() 
+                    else:
+                        st.error("批量删除操作失败。")
+            else:
+                st.warning("请至少选择一条记录进行删除。")
+    # ---------------------------------------------
+
     # 显示记录
-    if filtered_df.empty:
-        st.info("没有找到匹配的记录。")
+    if filtered_df.empty and search_query:
+        st.info(f"没有找到与 '{search_query}' 匹配的记录。")
+    elif filtered_df.empty:
+        st.info("没有学习记录。")
     else:
         # 遍历显示
         for index, item in filtered_df.iterrows():
+            timestamp = item['timestamp']
             display_sentence = item['sentence'][:20] + '...' if len(item['sentence']) > 20 else item['sentence']
             
-            # 使用 expander 包装单条记录
-            with st.expander(f"🕒 {item['timestamp']} | {display_sentence}"):
+            # 布局：左边是 checkbox，右边是 expander
+            col_check, col_expander = st.columns([0.05, 0.95])
+            
+            with col_check:
+                # 🌟 批量删除：为每个记录添加复选框
+                checkbox_key = f"sel_{timestamp}"
                 
-                # 布局：左边显示内容，右边放删除按钮
-                col1, col2 = st.columns([0.85, 0.15])
-                
-                with col1:
+                # 初始化/更新 session state 字典中的该 key
+                # 注意：这里必须使用 value=st.session_state.delete_selections.get(timestamp, False) 
+                # 来保持状态，否则 state 会在每次循环中被重置
+                st.session_state.delete_selections[timestamp] = st.checkbox(
+                    label="", 
+                    key=checkbox_key, 
+                    value=st.session_state.delete_selections.get(timestamp, False),
+                    label_visibility="hidden"
+                )
+
+            with col_expander:
+                with st.expander(f"🕒 {timestamp} | {display_sentence}"):
+                    
+                    st.markdown(f"**操作人：** {item['user']}")
                     st.markdown(f"**原文：** {item['sentence']}")
                     
-                    # 解析数据
                     data = item.get('data', {})
                     if data and "structure" in data:
-                        # 显示翻译
+                        st.markdown("---")
                         st.markdown(f"**翻译：** {data.get('translation', '无')}")
                         
-                        # 显示表格
-                        st.markdown("---")
+                        st.markdown("##### 结构拆解")
                         df_hist = pd.DataFrame(data['structure'])
                         st.table(df_hist.rename(columns=COLUMN_MAPPING))
                         
-                        # 显示语法笔记
                         if data.get('nuances'):
                              st.info(f"💡 笔记：{data.get('nuances')}")
                     else:
                         st.warning("⚠️ 旧数据或解析失败，无法显示详细内容")
-
-                # 🌟 需求三：删除功能
-                with col2:
-                    # 为每个按钮生成唯一的 key
-                    btn_key = f"del_{item['timestamp']}"
-                    if st.button("🗑️ 删除", key=btn_key, type="secondary"):
-                        with st.spinner("删除中..."):
-                            if delete_record(item['timestamp']):
-                                st.success("已删除")
-                                time.sleep(1) # 给一点时间让用户看到提示
-                                st.rerun() # 刷新页面
-                            else:
-                                st.error("删除失败")
 
 else:
     st.info("还没有学习记录，快去解析第一句日语吧！")
