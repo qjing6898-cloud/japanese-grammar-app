@@ -41,7 +41,7 @@ def get_sheets_client():
         st.error(f"Google Sheets 认证失败: {e}")
         return None
 
-# 缓存数据读取，避免频繁调用 API 触发配额限制
+# 缓存数据读取
 @st.cache_data(ttl=60) 
 def load_history():
     """从 Google Sheets 读取历史记录"""
@@ -54,7 +54,11 @@ def load_history():
         df = pd.DataFrame(worksheet.get_all_records())
         
         if 'data_json' in df.columns:
+            # 解析 JSON 字符串
             df['data'] = df['data_json'].apply(lambda x: json.loads(x) if x else {})
+            
+            # 🌟 新增：从 data 中提取语言字段，如果没有（老数据），默认为 "日语"
+            df['language'] = df['data'].apply(lambda x: x.get('language', '日语') if isinstance(x, dict) else '未知')
             
         return df.iloc[::-1] # 倒序
     except gspread.exceptions.SpreadsheetNotFound:
@@ -115,7 +119,7 @@ def delete_records_by_bulk(timestamps_list):
             st.warning("未找到要删除的记录。")
             return False
 
-        # 核心：按行号从大到小排序，确保先删除靠后的行，防止行索引错乱
+        # 核心：按行号从大到小排序
         rows_to_delete.sort(reverse=True)
         
         success_count = 0
@@ -130,35 +134,39 @@ def delete_records_by_bulk(timestamps_list):
         st.error(f"批量删除失败: {e}")
         return False
 
-# 列名映射
+# 列名映射 (通用化，不再局限于日语)
 COLUMN_MAPPING = {
-    "word": "单词",
-    "reading": "读音",
-    "pos_meaning": "品词 / 意味", 
+    "word": "单词/原文",
+    "reading": "发音 (音标/拼音/罗马音)",
+    "pos_meaning": "词性 / 含义", 
     "grammar": "语法说明",
-    "standard": "标准形式"
+    "standard": "原型/标准形式"
 }
 
 
 # --- 辅助函数：状态同步 ---
 
 def update_individual_selection(ts):
-    """当单个复选框被点击时调用，更新全局选中字典，并检查是否需要取消“全选”状态"""
+    """当单个复选框被点击时调用"""
     checkbox_key = f"sel_{ts}"
     is_checked = st.session_state[checkbox_key] 
-    
     st.session_state.delete_selections[ts] = is_checked
-
-    # 如果取消勾选了任一记录，则取消“全选”状态
     if not is_checked and st.session_state.select_all:
         st.session_state.select_all = False
 
 def update_selections():
-    """当点击全选时调用，强制更新所有可见记录的选中状态"""
+    """当点击全选时调用"""
     select_all_state = st.session_state.select_all
     
-    # 获取当前筛选后的数据范围
+    # 重新获取当前筛选后的数据
     history_df = load_history() 
+    
+    # 1. 应用语言筛选
+    filter_lang = st.session_state.get('filter_language', None)
+    if filter_lang:
+        history_df = history_df[history_df['language'] == filter_lang]
+        
+    # 2. 应用搜索关键词筛选
     search_query = st.session_state.get('search_query', '')
     if search_query:
         filtered_df = history_df[
@@ -168,57 +176,54 @@ def update_selections():
     else:
         filtered_df = history_df
         
-    # 遍历当前筛选后的所有时间戳
     for ts in filtered_df['timestamp']:
-        # 1. 更新全局选中字典
         st.session_state.delete_selections[ts] = select_all_state
-        # 2. 强制更新复选框的 Streamlit 内部状态 (确保 visual update)
         if f"sel_{ts}" in st.session_state:
             st.session_state[f"sel_{ts}"] = select_all_state
 
-# 修复 StreamlitAPIException：使用回调函数处理删除和重置状态
 def bulk_delete_callback(timestamps_to_delete):
-    """
-    删除按钮的实际回调函数，处理删除、状态重置和页面刷新。
-    """
+    """删除按钮的回调函数"""
     if not timestamps_to_delete:
         st.warning("请至少选择一条记录进行删除。")
         return
 
-    # 尝试执行批量删除
     if delete_records_by_bulk(timestamps_to_delete):
-        # 成功后，在回调中安全地重置状态
         st.session_state.select_all = False
         st.session_state.delete_selections = {}
-        
-        # 清除缓存。
         time.sleep(1) 
         load_history.clear()
-        
-        # ⚠️ 移除 st.rerun()。回调结束后 Streamlit 会自动重跑，避免警告。
-        # st.rerun() 
+        # st.rerun() # 回调结束后会自动刷新
 
 
-# --- 4. 核心功能：AI 分析 (升级版) ---
+# --- 4. 核心功能：AI 分析 (全语种升级版) ---
 def analyze_with_ai(text):
+    # 🌟 提示词大升级：支持自动识别语言
     prompt = f"""
-    请作为一位专业的日语老师，分析以下日语句子：
+    请作为一位精通全球语言的语言学专家，分析以下文本：
     “{text}”
     
-    请输出一个严格的 JSON 格式对象，包含以下三个字段：
-    1. "translation": 句子的中文翻译。
-    2. "nuances": 一个字符串，详细解释句子中的惯用语、语气、断句逻辑或特定语法应用（类似“语法笔记”）。
-    3. "structure": 一个列表，包含逐词拆解，每个元素包含：
-       - "word": 原文单词
-       - "reading": 罗马音
+    请执行以下步骤：
+    1. **自动识别** 输入文本的语言（例如：日语、英语、法语、韩语、中文、西班牙语等）。
+    2. 将文本翻译成流畅的 **中文（简体）**。
+    3. 分析文本中的语气、惯用语、语法结构或断句逻辑。
+    4. 对文本进行逐词/逐结构拆解分析。
+
+    请输出一个严格的 JSON 格式对象，包含以下四个字段：
+    1. "language": 识别出的语言名称 (字符串，例如 "英语", "日语")。
+    2. "translation": 中文翻译。
+    3. "nuances": 详细的语法笔记、惯用语解释或文化背景说明。
+    4. "structure": 一个列表，包含逐词拆解，每个元素包含：
+       - "word": 原文单词/词组
+       - "reading": 发音注音 (英语请提供IPA音标，日语提供罗马音，中文提供拼音，其他语言提供相应的拉丁化发音)
        - "pos_meaning": 词性及中文含义
-       - "grammar": 简短语法说明
-       - "standard": 标准形式
+       - "grammar": 简短语法说明 (时态、变位等)
+       - "standard": 原型/标准形式 (如动词原形)
 
     示例 JSON 结构:
     {{
-        "translation": "中文翻译...",
-        "nuances": "这里使用了...的惯用型...",
+        "language": "日语",
+        "translation": "...",
+        "nuances": "...",
         "structure": [
             {{ "word": "...", "reading": "...", "pos_meaning": "...", "grammar": "...", "standard": "..." }}
         ]
@@ -232,6 +237,7 @@ def analyze_with_ai(text):
         clean_text = response.text.replace('```json', '').replace('```', '').strip()
         result = json.loads(clean_text)
         
+        # 简单验证结构
         if "structure" not in result or "translation" not in result:
              return {"error": "AI返回格式不完整", "structure": []}
             
@@ -242,8 +248,8 @@ def analyze_with_ai(text):
 
 # --- 3. 页面配置 ---
 st.set_page_config(
-    page_title="日语语法伴侣 AI版 (云同步)",
-    page_icon="🇯🇵",
+    page_title="全能语言伴侣 AI版",
+    page_icon="🌍",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
@@ -272,6 +278,17 @@ hide_menu_style = """
             margin-top: 10px;
             border-left: 5px solid #4da6ff;
         }
+        /* 语言标签样式 */
+        .lang-tag {
+            background-color: #ffe6e6;
+            color: #cc0000;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: inline-block;
+        }
         </style>
         """
 st.markdown(hide_menu_style, unsafe_allow_html=True)
@@ -281,34 +298,33 @@ if 'user_id' not in st.session_state:
     st.session_state['user_id'] = '用户A'
 
 # --- 5. 界面 UI ---
-st.title("🇯🇵 日语语法伴侣 (Pro Max)")
+st.title("🌍 全能语言伴侣 (AI Pro)")
 
 st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称:", value=st.session_state['user_id'])
 
 # 输入区
 with st.container():
-    sentence = st.text_area("输入日语:", height=80, placeholder="例如：決めちゃいますからね")
+    sentence = st.text_area("输入任何语言:", height=80, placeholder="例如：Hello world / Bonjour / 決めちゃいますからね")
     
     if st.button("✨ AI 深度解析", type="primary"):
         if not sentence:
             st.warning("请输入句子")
         else:
-            with st.spinner('AI 老师正在翻译和拆解 (约需5秒)...'):
+            with st.spinner('AI 正在识别语言并解析 (约需5秒)...'):
                 ai_result = analyze_with_ai(sentence)
                 
                 if "error" in ai_result:
                     st.error(ai_result["error"])
                 else:
                     save_record(sentence, ai_result)
-                    
-                    # 🌟 关键修复：清除历史记录缓存，确保下次加载时包含新记录
                     load_history.clear()
                     
-                    st.success("解析完成！")
+                    st.success(f"解析完成！识别为：{ai_result.get('language', '未知')}")
                     
                     st.markdown(f"""
                     <div class="translation-box">
-                        <b>🇨🇳 中文翻译：</b><br>{ai_result.get('translation', '')}
+                        <span class="lang-tag">{ai_result.get('language', '通用')}</span>
+                        <b> 🇨🇳 中文翻译：</b><br>{ai_result.get('translation', '')}
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -320,14 +336,14 @@ with st.container():
 
                     st.markdown(f"""
                     <div class="grammar-box">
-                        <b>💡 语法笔记与惯用语：</b><br>
+                        <b>💡 语法笔记与文化背景：</b><br>
                         {ai_result.get('nuances', '无特殊说明').replace(chr(10), '<br>')}
                     </div>
                     """, unsafe_allow_html=True)
 
 st.divider()
 
-# --- 6. 学习足迹 (含搜索与批量删除) ---
+# --- 6. 学习足迹 (含语言筛选、搜索与批量删除) ---
 st.subheader("📚 学习足迹")
 
 # 初始化 session_state
@@ -337,73 +353,105 @@ if 'delete_selections' not in st.session_state:
     st.session_state.delete_selections = {}
 if 'search_query' not in st.session_state:
     st.session_state.search_query = ''
-
+if 'filter_language' not in st.session_state:
+    st.session_state.filter_language = None  # None 表示显示全部
 
 # 加载数据
 history_df = load_history()
 
 if not history_df.empty and 'timestamp' in history_df.columns:
     
-    # 搜索框架
+    # 🌟 1. 自动生成语言筛选按钮
+    # 获取历史记录中出现过的所有语言
+    available_languages = history_df['language'].unique().tolist()
+    
+    if len(available_languages) > 0:
+        st.markdown("**按语言筛选：**")
+        
+        # 动态创建列来放置按钮 (防止按钮换行太丑)
+        # 这里使用一个简单的水平布局容器
+        cols = st.columns(len(available_languages) + 1)
+        
+        # 定义一个回调函数来处理按钮点击
+        def set_lang_filter(lang):
+            if st.session_state.filter_language == lang:
+                st.session_state.filter_language = None # 再次点击取消筛选
+            else:
+                st.session_state.filter_language = lang
+            # 重置全选状态，因为列表变了
+            st.session_state.select_all = False 
+            st.session_state.delete_selections = {}
+
+        # 渲染按钮
+        # 渲染 "全部" 状态的指示 (可选，这里通过按钮颜色区分)
+        for i, lang in enumerate(available_languages):
+            # 检查当前语言是否被选中，给予不同的视觉提示 (通过 type='primary' 或 'secondary')
+            btn_type = "primary" if st.session_state.filter_language == lang else "secondary"
+            if cols[i].button(lang, key=f"filter_btn_{lang}", type=btn_type):
+                set_lang_filter(lang)
+                st.rerun()
+
+    st.markdown("---")
+
+    # 🌟 2. 执行多重过滤 (语言 + 搜索)
+    filtered_df = history_df.copy()
+
+    # (A) 语言过滤
+    if st.session_state.filter_language:
+        filtered_df = filtered_df[filtered_df['language'] == st.session_state.filter_language]
+
+    # (B) 搜索过滤
     search_query = st.text_input(
-        "🔍 搜索历史记录 (输入关键词):", 
-        placeholder="输入日语或翻译关键词...",
-        key='search_query' # 绑定到 session state
+        "🔍 搜索历史记录:", 
+        placeholder="输入原文或翻译关键词...",
+        key='search_query'
     )
     
-    # 执行过滤
     if search_query:
-        # 搜索逻辑：支持搜索原文和解析后的数据（如翻译、笔记等）
-        filtered_df = history_df[
-            history_df['sentence'].str.contains(search_query, case=False, na=False) | 
-            (history_df['data'].astype(str).str.contains(search_query, case=False, na=False))
+        filtered_df = filtered_df[
+            filtered_df['sentence'].str.contains(search_query, case=False, na=False) | 
+            (filtered_df['data'].astype(str).str.contains(search_query, case=False, na=False))
         ]
-    else:
-        filtered_df = history_df
 
     # --- 批量删除按钮、全选/反选和处理逻辑 ---
     if not filtered_df.empty:
         col_select, col_delete_btn, col_placeholder = st.columns([0.15, 0.35, 0.5])
 
-        # 🌟 全选/反选复选框
         col_select.checkbox(
             "全选",
             key="select_all",
             on_change=update_selections
         )
 
-        # 在按钮点击前，计算需要删除的时间戳列表
         timestamps_to_delete = [
             ts for ts, is_checked in st.session_state.delete_selections.items() 
             if is_checked and ts in filtered_df['timestamp'].values
         ]
         
-        # 🌟 关键修改：按钮使用 on_click 触发回调函数
         col_delete_btn.button(
             "🗑️ 批量删除选中项", 
             type="primary", 
             key="bulk_delete_main_btn",
-            on_click=bulk_delete_callback,  # 调用回调函数
-            args=(timestamps_to_delete,)    # 传递需要删除的列表
+            on_click=bulk_delete_callback,
+            args=(timestamps_to_delete,)
         )
 
     # --- 显示记录 ---
-    if filtered_df.empty and search_query:
-        st.info(f"没有找到与 '{search_query}' 匹配的记录。")
-    elif filtered_df.empty:
-        st.info("没有学习记录。")
+    if filtered_df.empty:
+        if search_query or st.session_state.filter_language:
+            st.info("没有找到匹配的记录。")
+        else:
+            st.info("没有学习记录。")
     else:
-        # 遍历显示
         for index, item in filtered_df.iterrows():
             timestamp = item['timestamp']
             display_sentence = item['sentence'][:20] + '...' if len(item['sentence']) > 20 else item['sentence']
+            lang_label = item.get('language', '未知')
             
             col_check, col_expander = st.columns([0.05, 0.95])
             
             with col_check:
                 checkbox_key = f"sel_{timestamp}"
-                
-                # 确保每次循环都创建 checkbox key，以防 update_selections 找不到
                 if checkbox_key not in st.session_state:
                     st.session_state[checkbox_key] = st.session_state.delete_selections.get(timestamp, False)
 
@@ -417,7 +465,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                 )
 
             with col_expander:
-                with st.expander(f"🕒 {timestamp} | {display_sentence}"):
+                with st.expander(f"🕒 {timestamp} | [{lang_label}] {display_sentence}"):
                     
                     st.markdown(f"**操作人：** {item['user']}")
                     st.markdown(f"**原文：** {item['sentence']}")
@@ -427,7 +475,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                         st.markdown("---")
                         st.markdown(f"**翻译：** {data.get('translation', '无')}")
                         
-                        st.markdown("##### 结构拆解")
+                        st.markdown(f"##### {lang_label}结构拆解")
                         df_hist = pd.DataFrame(data['structure'])
                         st.table(df_hist.rename(columns=COLUMN_MAPPING))
                         
@@ -437,4 +485,4 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                         st.warning("⚠️ 旧数据或解析失败，无法显示详细内容")
 
 else:
-    st.info("还没有学习记录，快去解析第一句日语吧！")
+    st.info("还没有学习记录，快去输入第一句外语吧！")
