@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 import gspread
 import pytz 
+import time
 
 # --- 1. 配置你的 AI ---
 try:
@@ -52,8 +53,9 @@ def load_history():
         
         if 'data_json' in df.columns:
             # 解析 JSON 字符串
-            df['data'] = df['data_json'].apply(lambda x: json.loads(x) if x else [])
-            df = df.drop(columns=['data_json'])
+            df['data'] = df['data_json'].apply(lambda x: json.loads(x) if x else {})
+            # 移除原始 JSON 字符串列 (保留其他列以便筛选)
+            # df = df.drop(columns=['data_json']) 
             
         return df.iloc[::-1] # 倒序
     except gspread.exceptions.SpreadsheetNotFound:
@@ -65,7 +67,7 @@ def load_history():
 
 
 def save_record(sentence, result_data):
-    # 将新的记录写入 Google Sheets
+    """将新的记录写入 Google Sheets"""
     gc = get_sheets_client()
     if not gc: return
     
@@ -90,6 +92,32 @@ def save_record(sentence, result_data):
     except Exception as e:
         st.error(f"保存记录到 Google Sheets 失败: {e}")
 
+def delete_record(timestamp_to_delete):
+    """根据时间戳删除 Google Sheets 中的记录"""
+    gc = get_sheets_client()
+    if not gc: return False
+    
+    try:
+        spreadsheet = gc.open_by_url(SHEET_URL)
+        worksheet = spreadsheet.sheet1
+        
+        # 获取第一列（时间戳列）的所有值
+        timestamps = worksheet.col_values(1)
+        
+        # 查找要删除的时间戳所在的行号 (注意：gspread行号从1开始，且列表索引从0开始)
+        try:
+            # timestamps列表包含表头，所以索引要小心处理
+            row_index = timestamps.index(timestamp_to_delete) + 1
+            worksheet.delete_rows(row_index)
+            return True
+        except ValueError:
+            st.error("未找到对应记录，可能已被删除。")
+            return False
+            
+    except Exception as e:
+        st.error(f"删除失败: {e}")
+        return False
+
 # --- 3. 页面配置 ---
 st.set_page_config(
     page_title="日语语法伴侣 AI版 (云同步)",
@@ -104,8 +132,24 @@ hide_menu_style = """
         #MainMenu {visibility: hidden;}
         header {visibility: hidden;}
         footer {visibility: hidden;}
-        /* 尝试强制表格文本换行 (针对 st.table) */
+        /* 强制 st.table 自动换行 */
         td { white-space: normal !important; word-wrap: break-word !important; }
+        /* 优化翻译文本样式 */
+        .translation-box {
+            background-color: #f0f2f6;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 16px;
+            color: #31333F;
+        }
+        .grammar-box {
+            background-color: #e8f4f9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            border-left: 5px solid #4da6ff;
+        }
         </style>
         """
 st.markdown(hide_menu_style, unsafe_allow_html=True)
@@ -114,20 +158,33 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 if 'user_id' not in st.session_state:
     st.session_state['user_id'] = '用户A'
 
-# --- 4. 核心功能：AI 分析 ---
+# --- 4. 核心功能：AI 分析 (升级版) ---
 def analyze_with_ai(text):
+    # 🌟 提示词升级：增加翻译和语法应用
     prompt = f"""
     请作为一位专业的日语老师，分析以下日语句子：
     “{text}”
     
-    请输出一个严格的 JSON 格式列表，包含以下字段：
-    - "word": 原文单词
-    - "reading": 罗马音 (Romaji)
-    - "pos_meaning": 词性及中文含义 (例如：动词 / 决定)
-    - "grammar": 详细语法说明 (例如：てしまう的口语缩略形式)
-    - "standard": 标准形式/书面语 (例如：てしまいます)
+    请输出一个严格的 JSON 格式对象，包含以下三个字段：
+    1. "translation": 句子的中文翻译。
+    2. "nuances": 一个字符串，详细解释句子中的惯用语、语气、断句逻辑或特定语法应用（类似“语法笔记”）。
+    3. "structure": 一个列表，包含逐词拆解，每个元素包含：
+       - "word": 原文单词
+       - "reading": 罗马音
+       - "pos_meaning": 词性及中文含义
+       - "grammar": 简短语法说明
+       - "standard": 标准形式
 
-    请确保输出是合法的 JSON 数组格式，不要包含 Markdown 标记。
+    示例 JSON 结构:
+    {{
+        "translation": "中文翻译...",
+        "nuances": "这里使用了...的惯用型...",
+        "structure": [
+            {{ "word": "...", "reading": "...", "pos_meaning": "...", "grammar": "...", "standard": "..." }}
+        ]
+    }}
+
+    请确保输出是合法的 JSON 格式，不要包含 Markdown 标记。
     """
     
     try:
@@ -135,27 +192,28 @@ def analyze_with_ai(text):
         clean_text = response.text.replace('```json', '').replace('```', '').strip()
         result = json.loads(clean_text)
         
-        if not isinstance(result, list) or not result:
-            return [{"word": "错误", "pos_meaning": "AI未能返回有效的语法解析结果。"}]
+        # 简单验证结构
+        if "structure" not in result or "translation" not in result:
+             return {"error": "AI返回格式不完整", "structure": []}
             
         return result
         
     except Exception as e:
-        return [{"word": "错误", "pos_meaning": f"AI分析失败: {e}"}]
+        return {"error": f"AI分析失败: {e}", "structure": []}
 
-# 定义列名映射字典 (用于美化 st.table 的表头)
+# 列名映射
 COLUMN_MAPPING = {
-    "word": "单词 (日文)",
-    "reading": "读音 (罗马字)",
+    "word": "单词",
+    "reading": "读音",
     "pos_meaning": "品词 / 意味", 
     "grammar": "语法说明",
     "standard": "标准形式"
 }
 
 # --- 5. 界面 UI ---
-st.title("🇯🇵 日语语法伴侣 (云同步 AI Pro)")
+st.title("🇯🇵 日语语法伴侣 (Pro Max)")
 
-st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称 (用于历史记录):", value=st.session_state['user_id'])
+st.session_state['user_id'] = st.sidebar.text_input("输入你的昵称:", value=st.session_state['user_id'])
 
 # 输入区
 with st.container():
@@ -165,46 +223,106 @@ with st.container():
         if not sentence:
             st.warning("请输入句子")
         else:
-            with st.spinner('AI 老师正在分析语法 (约需3秒)...'):
-                result_data = analyze_with_ai(sentence)
+            with st.spinner('AI 老师正在翻译和拆解 (约需5秒)...'):
+                ai_result = analyze_with_ai(sentence)
                 
-                # 写入 Google Sheets
-                if result_data and 'word' in result_data[0] and '错误' not in result_data[0]['word']:
-                    save_record(sentence, result_data)
-                
-                st.success("解析完成！")
-                st.markdown("### 📝 深度拆解")
-                
-                # 🌟 使用 st.table 替代 st.dataframe
-                df = pd.DataFrame(result_data)
-                # 重命名列以显示中文表头
-                df_display = df.rename(columns=COLUMN_MAPPING)
-                # st.table 会自动换行显示所有文本
-                st.table(df_display)
+                # 检查是否有错误
+                if "error" in ai_result:
+                    st.error(ai_result["error"])
+                else:
+                    # 写入 Google Sheets
+                    save_record(sentence, ai_result)
+                    
+                    st.success("解析完成！")
+                    
+                    # 🌟 1. 显示中文翻译 (新增需求)
+                    st.markdown(f"""
+                    <div class="translation-box">
+                        <b>🇨🇳 中文翻译：</b><br>{ai_result.get('translation', '')}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 🌟 2. 显示表格 (自动换行)
+                    st.markdown("### 🧩 结构拆解")
+                    df = pd.DataFrame(ai_result.get('structure', []))
+                    if not df.empty:
+                        df_display = df.rename(columns=COLUMN_MAPPING)
+                        st.table(df_display)
+
+                    # 🌟 3. 显示语法/惯用语详解 (新增需求)
+                    st.markdown(f"""
+                    <div class="grammar-box">
+                        <b>💡 语法笔记与惯用语：</b><br>
+                        {ai_result.get('nuances', '无特殊说明').replace(chr(10), '<br>')}
+                    </div>
+                    """, unsafe_allow_html=True)
 
 st.divider()
 
-# 历史记录
-st.subheader("📚 学习足迹 (云同步)")
+# --- 6. 学习足迹 (含搜索与删除) ---
+st.subheader("📚 学习足迹")
 
+# 加载数据
 history_df = load_history()
 
 if not history_df.empty and 'timestamp' in history_df.columns:
     
-    for index, item in history_df.iterrows():
-        display_sentence = item['sentence'][:20] + '...' if len(item['sentence']) > 20 else item['sentence']
-        
-        with st.expander(f"🕒 {item['timestamp']} | 用户: {item['user']} | 句子: {display_sentence}"):
-            st.info(item['sentence'])
-            
-            if item['data']:
-                st.markdown("##### 详细解析结果")
-                df_hist = pd.DataFrame(item['data'])
-                # 同样对历史记录使用 st.table 并重命名列
-                df_hist_display = df_hist.rename(columns=COLUMN_MAPPING)
-                st.table(df_hist_display)
-            else:
-                st.warning("本次查询无有效的解析数据。")
+    # 🌟 需求二：搜索框架
+    search_query = st.text_input("🔍 搜索历史记录 (输入关键词):", placeholder="输入日语或翻译关键词...")
     
+    # 执行过滤
+    if search_query:
+        # 模糊搜索：在句子列中查找
+        filtered_df = history_df[history_df['sentence'].str.contains(search_query, case=False, na=False)]
+    else:
+        filtered_df = history_df
+
+    # 显示记录
+    if filtered_df.empty:
+        st.info("没有找到匹配的记录。")
+    else:
+        # 遍历显示
+        for index, item in filtered_df.iterrows():
+            display_sentence = item['sentence'][:20] + '...' if len(item['sentence']) > 20 else item['sentence']
+            
+            # 使用 expander 包装单条记录
+            with st.expander(f"🕒 {item['timestamp']} | {display_sentence}"):
+                
+                # 布局：左边显示内容，右边放删除按钮
+                col1, col2 = st.columns([0.85, 0.15])
+                
+                with col1:
+                    st.markdown(f"**原文：** {item['sentence']}")
+                    
+                    # 解析数据
+                    data = item.get('data', {})
+                    if data and "structure" in data:
+                        # 显示翻译
+                        st.markdown(f"**翻译：** {data.get('translation', '无')}")
+                        
+                        # 显示表格
+                        st.markdown("---")
+                        df_hist = pd.DataFrame(data['structure'])
+                        st.table(df_hist.rename(columns=COLUMN_MAPPING))
+                        
+                        # 显示语法笔记
+                        if data.get('nuances'):
+                             st.info(f"💡 笔记：{data.get('nuances')}")
+                    else:
+                        st.warning("⚠️ 旧数据或解析失败，无法显示详细内容")
+
+                # 🌟 需求三：删除功能
+                with col2:
+                    # 为每个按钮生成唯一的 key
+                    btn_key = f"del_{item['timestamp']}"
+                    if st.button("🗑️ 删除", key=btn_key, type="secondary"):
+                        with st.spinner("删除中..."):
+                            if delete_record(item['timestamp']):
+                                st.success("已删除")
+                                time.sleep(1) # 给一点时间让用户看到提示
+                                st.rerun() # 刷新页面
+                            else:
+                                st.error("删除失败")
+
 else:
-    st.info("历史记录加载失败或表格为空。请检查 Google Sheets 共享设置和配置。")
+    st.info("还没有学习记录，快去解析第一句日语吧！")
