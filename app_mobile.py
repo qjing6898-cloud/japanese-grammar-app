@@ -41,8 +41,12 @@ def get_sheets_client():
         st.error(f"Google Sheets 认证失败: {e}")
         return None
 
+# 调整 load_history 函数，使用 st.cache_data 缓存数据
+# 设置 ttl (Time To Live) 为 60 秒，表示缓存的数据在 60 秒内不会重新加载
+@st.cache_data(ttl=60) 
 def load_history():
     """从 Google Sheets 读取历史记录"""
+    # ... (函数体内容保持不变)
     gc = get_sheets_client()
     if not gc: return pd.DataFrame()
     
@@ -54,15 +58,14 @@ def load_history():
         if 'data_json' in df.columns:
             # 解析 JSON 字符串
             df['data'] = df['data_json'].apply(lambda x: json.loads(x) if x else {})
-            # 移除原始 JSON 字符串列 (保留其他列以便筛选)
-            # df = df.drop(columns=['data_json']) 
             
         return df.iloc[::-1] # 倒序
     except gspread.exceptions.SpreadsheetNotFound:
         st.warning(f"Google 表格 '{SHEET_TITLE}' 不存在或无访问权限。")
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"加载历史记录失败: {e}")
+        # 注意：这里我们保留了原始的错误捕获，但现在应用了缓存
+        st.error(f"加载历史记录失败: {e}") 
         return pd.DataFrame()
 
 
@@ -375,3 +378,4 @@ if not history_df.empty and 'timestamp' in history_df.columns:
 
 else:
     st.info("还没有学习记录，快去解析第一句日语吧！")
+
