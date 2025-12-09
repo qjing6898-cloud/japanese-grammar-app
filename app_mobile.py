@@ -26,7 +26,7 @@ except Exception as e:
 
 # --- 2. 数据库连接配置 (Google Sheets) ---
 SHEET_TITLE = "Japanese_Grammar_History"
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1xrXmiV5yEYIC4lDfgjk79pQDNVHYZugW6XUReZbHWjY/edit?gid=0#gid=0" 
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1xrXmiV5yEYIC4lDfgjk79vQDNVHYZugW6XUReZbHWjY/edit?gid=0#gid=0" 
 
 @st.cache_resource(ttl=3600)
 def get_sheets_client():
@@ -205,11 +205,10 @@ def text_to_speech(text, lang_name):
         # print(f"TTS Error: {e}") # Debugging
         return None
     
-# 🌟 修复：新增回调函数，增加 st.rerun() 确保状态更新生效
+# 🌟 新增回调函数：清除日期筛选
 def clear_date_filter():
-    """将 Session State 中的日期筛选值设置为 None 并强制刷新"""
+    """将 Session State 中的日期筛选值设置为 None"""
     st.session_state.filter_date = None
-    st.rerun() 
 
 # --- 4. 核心功能：AI 分析 (支持目标语言) ---
 def analyze_with_ai(input_text, target_language):
@@ -271,7 +270,7 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 样式代码（已优化 UI 对齐）
+# 样式代码（保持不变）
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -281,6 +280,7 @@ st.markdown("""
     
     .stApp { background-color: #fafafa; }
     .main .block-container { 
+        background-color: #ffffff; 
         padding: 2rem; 
         border-radius: 15px; 
         box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
@@ -315,12 +315,6 @@ st.markdown("""
     }
     .correction-box strong { color: #2E7D32; }
     .original-input { color: #666; font-style: italic; font-size: 14px; margin-bottom: 5px;}
-    
-    /* 🌟 UI 修复样式：用于将清除按钮对齐到日期输入框旁边 */
-    .stButton>button {
-        height: 100%; 
-        margin-top: 28px; /* 经验值：向下微调 28px 以实现与 Streamlit 日期输入框的视觉对齐 */
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -475,6 +469,7 @@ history_df = load_history()
 if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 顶部工具栏：日期 + 筛选 + 复习模式 + 导出
+    # 调整列宽：将原 col_date 拆分为 col_date_input 和 col_date_clear
     col_date_input, col_date_clear, col_filter, col_review, col_export = st.columns([0.20, 0.05, 0.45, 0.15, 0.15])
     
     with col_date_input:
@@ -487,9 +482,9 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             label_visibility="collapsed"
         )
     
-    # 清除按钮，已移除占位符
+    # 🌟 新增清除按钮
     with col_date_clear:
-        # 使用自定义 CSS 确保对齐
+        st.markdown("<div style='height:30px;'></div>", unsafe_allow_html=True) # 占位符对齐
         st.button("❌", key='clear_date_btn', help="清除日期筛选", on_click=clear_date_filter)
 
 
