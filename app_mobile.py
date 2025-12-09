@@ -11,13 +11,18 @@ import io
 
 # --- 1. 配置你的 AI ---
 try:
+    # 假设 GOOGLE_API_KEY 已配置
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
 except KeyError:
     st.error("无法读取 Gemini API Key。请在 Streamlit Cloud Secrets 中检查 GOOGLE_API_KEY 配置。")
 except Exception as e:
-    st.error(f"AI 配置错误: {e}")
+    # 捕获配额超限错误，避免应用崩溃
+    if "429" in str(e):
+        st.error("AI 服务配额已超限。请稍后重试或检查你的 API 使用情况。")
+    else:
+        st.error(f"AI 配置错误: {e}")
 
 # --- 2. 数据库连接配置 (Google Sheets) ---
 SHEET_TITLE = "Japanese_Grammar_History"
@@ -202,7 +207,7 @@ def text_to_speech(text, lang_name):
 
 # --- 4. 核心功能：AI 分析 (支持目标语言) ---
 def analyze_with_ai(input_text, target_language):
-    # 🌟 传入目标语言，让 AI 先翻译再解析
+    
     prompt = f"""
     请作为一位精通全球语言的语言学专家，对以下文本执行两步操作：
     1. **翻译：** 将用户输入的文本翻译成 **{target_language}**。
@@ -245,7 +250,11 @@ def analyze_with_ai(input_text, target_language):
         return result
         
     except Exception as e:
-        st.error(f"AI分析失败: {e}")
+        # 捕获 API 错误并显示友好信息
+        if "429" in str(e):
+             st.error("AI服务配额已超限 (429)。请等待配额刷新或升级你的 API 计划。")
+        else:
+             st.error(f"AI分析失败: {e}")
         return {"error": f"AI分析失败: {e}", "structure": []}
 
 # --- 3. 页面配置 ---
@@ -256,7 +265,7 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 样式代码（与之前版本保持一致）
+# 样式代码（保持不变）
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -338,11 +347,11 @@ st.caption("AI 驱动的跨语言翻译、纠错与深度解析助手")
 
 # 输入区
 with st.container():
-    # 🌟 实用功能三：目标解析语言选择
+    # 目标解析语言选择
     target_lang_choice = st.selectbox(
         "🎯 **选择目标解析语言 (AI 会先翻译到此语言，再进行分析)**",
         options=['英语', '日语', '韩语', '法语', '西班牙语', '德语', '中文'],
-        index=0 # 默认英语
+        index=0 
     )
 
     sentence = st.text_area("", height=100, placeholder="在此输入你的句子（例如：中文、韩语、或任何你想分析的语言）...")
@@ -359,9 +368,9 @@ with st.container():
                 ai_result = analyze_with_ai(sentence, target_lang_choice)
                 
                 if "error" in ai_result:
-                    st.error(ai_result["error"])
+                    # 错误信息已经在 analyze_with_ai 中显示
+                    pass
                 else:
-                    # 记录保存的是原始输入和解析结果 (包含目标句子)
                     save_record(sentence, ai_result) 
                     load_history.clear() 
                     
@@ -382,7 +391,6 @@ with st.container():
                         c_lang, c_audio = st.columns([0.3, 0.7])
                         with c_lang:
                             st.markdown(f"**🎯 目标句子 ({lang_name}):**")
-                            # 🌟 显示目标句子 (Analysis Target)
                             st.markdown(f"<span class='lang-tag'>{target_sentence}</span>", unsafe_allow_html=True)
                         with c_audio:
                             audio_fp = text_to_speech(target_sentence, lang_name) # 朗读目标句子
@@ -395,7 +403,6 @@ with st.container():
                     tab1, tab2, tab3 = st.tabs(["📝 翻译与笔记", "🧩 结构拆解", "🔍 原始数据"])
                     
                     with tab1:
-                        # 🌟 实用功能一：纠错结果展示
                         if correction != target_sentence:
                             st.markdown(f"""
                             <div class="correction-box">
@@ -412,7 +419,6 @@ with st.container():
                             """, unsafe_allow_html=True)
 
                         st.markdown("#### 🇨🇳 中文释义")
-                        # 翻译字段依然是中文释义
                         st.markdown(f"<div class='trans-text'>{ai_result.get('translation', '')}</div>", unsafe_allow_html=True)
                         
                         st.markdown("#### 💡 语法与文化笔记")
@@ -436,7 +442,7 @@ with st.container():
 
 st.divider()
 
-# --- 7. 学习足迹 (保持不变) ---
+# --- 7. 学习足迹 (日期筛选功能已集成) ---
 st.subheader("📚 学习足迹")
 
 # 初始化 session_state
@@ -450,19 +456,34 @@ if 'filter_language' not in st.session_state:
     st.session_state.filter_language = None
 if 'review_mode' not in st.session_state:
     st.session_state.review_mode = False
+# 🌟 初始化日期筛选状态
+if 'filter_date' not in st.session_state:
+    st.session_state.filter_date = None
 
 # 加载数据
 history_df = load_history()
 
 if not history_df.empty and 'timestamp' in history_df.columns:
     
-    col_filter, col_review, col_export = st.columns([0.6, 0.2, 0.2])
+    # 顶部工具栏：日期 + 筛选 + 复习模式 + 导出
+    col_date, col_filter, col_review, col_export = st.columns([0.25, 0.45, 0.15, 0.15])
     
+    with col_date:
+        st.markdown("##### 🔍 选择日期")
+        st.session_state.filter_date = st.date_input(
+            "选择查询日期",
+            value=st.session_state.filter_date,
+            max_value=datetime.now().date(),
+            key='date_selector',
+            label_visibility="collapsed"
+        )
+
     with col_filter:
         available_languages = history_df['language'].unique().tolist()
         if len(available_languages) > 0:
             st.markdown("##### 语言筛选")
-            cols = st.columns(len(available_languages) + 1)
+            # 自动调整列宽以适应语言数量
+            cols = st.columns(min(len(available_languages), 5)) 
             def set_lang_filter(lang):
                 if st.session_state.filter_language == lang:
                     st.session_state.filter_language = None
@@ -472,10 +493,11 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                 st.session_state.delete_selections = {}
 
             for i, lang in enumerate(available_languages):
-                btn_type = "primary" if st.session_state.filter_language == lang else "secondary"
-                if cols[i].button(lang, key=f"filter_btn_{lang}", type=btn_type):
-                    set_lang_filter(lang)
-                    st.rerun()
+                if i < 5: # 仅显示前 5 个语言，避免溢出
+                    btn_type = "primary" if st.session_state.filter_language == lang else "secondary"
+                    if cols[i].button(lang, key=f"filter_btn_{lang}", type=btn_type):
+                        set_lang_filter(lang)
+                        st.rerun()
 
     with col_review:
         st.markdown("##### 复习模式")
@@ -494,12 +516,25 @@ if not history_df.empty and 'timestamp' in history_df.columns:
 
     # 执行过滤
     filtered_df = history_df.copy()
+    
+    # 语言过滤
     if st.session_state.filter_language:
         filtered_df = filtered_df[filtered_df['language'] == st.session_state.filter_language]
 
+    # 🌟 日期过滤逻辑
+    if st.session_state.filter_date:
+        # 确保时间戳列存在
+        if 'timestamp' in filtered_df.columns:
+            # 将 timestamp 字符串转换为 datetime.date 对象进行比对
+            filtered_df['record_date'] = pd.to_datetime(filtered_df['timestamp']).dt.date
+            selected_date = st.session_state.filter_date
+            filtered_df = filtered_df[filtered_df['record_date'] == selected_date]
+        # 清理临时列
+        if 'record_date' in filtered_df.columns:
+            filtered_df = filtered_df.drop(columns=['record_date'])
+            
     search_query = st.text_input("🔍 搜索历史:", placeholder="搜索原文、翻译或笔记...", key='search_query')
     if search_query:
-        # 搜索逻辑需要兼容新的 JSON 字段（original_input, target_sentence）
         filtered_df = filtered_df[
             filtered_df['sentence'].str.contains(search_query, case=False, na=False) | 
             (filtered_df['data'].astype(str).str.contains(search_query, case=False, na=False))
@@ -523,7 +558,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             args=(timestamps_to_delete,)
         )
 
-    # 列表显示
+    # 列表显示 (保持不变)
     if filtered_df.empty:
         st.info("📭 没有找到匹配的记录")
     else:
@@ -532,15 +567,12 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             lang_label = item.get('language', '未知')
             
             data = item.get('data', {})
-            # 历史记录展示现在以 Target Sentence 为主
             target_sentence_hist = data.get('target_sentence', item['sentence']) 
             original_input_hist = item['sentence'] 
 
-            # 复习模式下，只显示目标句子
             if st.session_state.review_mode:
                  display_sentence = target_sentence_hist
             else:
-                 # 正常模式下，显示 Target Sentence，并加上 Original Input 提示
                  display_sentence = target_sentence_hist[:30] + '...' if len(target_sentence_hist) > 30 else target_sentence_hist
                  display_sentence = f"({original_input_hist[:10]}... →) {display_sentence}"
 
