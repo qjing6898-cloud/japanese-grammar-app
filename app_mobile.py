@@ -206,9 +206,10 @@ def text_to_speech(text, lang_name):
         return None
     
 # 🌟 新增回调函数：清除日期筛选
-def clear_date_filter():
+def ():
     """将 Session State 中的日期筛选值设置为 None"""
     st.session_state.filter_date = None
+    st.rerun()
 
 # --- 4. 核心功能：AI 分析 (支持目标语言) ---
 def analyze_with_ai(input_text, target_language):
@@ -484,8 +485,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 🌟 新增清除按钮
     with col_date_clear:
-        st.markdown("<div style='height:30px;'></div>", unsafe_allow_html=True) # 占位符对齐
-        st.button("❌", key='clear_date_btn', help="清除日期筛选", on_click=clear_date_filter)
+        st.button("❌", key='clear_date_btn', help="清除日期筛选", on_click=)
 
 
     with col_filter:
@@ -655,3 +655,4 @@ if not history_df.empty and 'timestamp' in history_df.columns:
 
 else:
     st.info("🌟 欢迎使用！输入第一个句子开始你的语言之旅吧！")
+
