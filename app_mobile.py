@@ -205,10 +205,11 @@ def text_to_speech(text, lang_name):
         # print(f"TTS Error: {e}") # Debugging
         return None
     
-# 🌟 新增回调函数：清除日期筛选
-def ():
-    """将 Session State 中的日期筛选值设置为 None"""
+# 🌟 修改后的回调函数：清除日期筛选
+def clear_date_filter():
+    """将 Session State 中的日期筛选值设置为 None 并强制刷新"""
     st.session_state.filter_date = None
+    # 强制重新运行以确保筛选被清除
     st.rerun()
 
 # --- 4. 核心功能：AI 分析 (支持目标语言) ---
@@ -655,4 +656,5 @@ if not history_df.empty and 'timestamp' in history_df.columns:
 
 else:
     st.info("🌟 欢迎使用！输入第一个句子开始你的语言之旅吧！")
+
 
