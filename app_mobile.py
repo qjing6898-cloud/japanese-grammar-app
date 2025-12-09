@@ -204,6 +204,11 @@ def text_to_speech(text, lang_name):
     except Exception as e:
         # print(f"TTS Error: {e}") # Debugging
         return None
+    
+# 🌟 新增回调函数：清除日期筛选
+def clear_date_filter():
+    """将 Session State 中的日期筛选值设置为 None"""
+    st.session_state.filter_date = None
 
 # --- 4. 核心功能：AI 分析 (支持目标语言) ---
 def analyze_with_ai(input_text, target_language):
@@ -368,7 +373,6 @@ with st.container():
                 ai_result = analyze_with_ai(sentence, target_lang_choice)
                 
                 if "error" in ai_result:
-                    # 错误信息已经在 analyze_with_ai 中显示
                     pass
                 else:
                     save_record(sentence, ai_result) 
@@ -442,7 +446,7 @@ with st.container():
 
 st.divider()
 
-# --- 7. 学习足迹 (日期筛选功能已集成) ---
+# --- 7. 学习足迹 (日期筛选清除功能已集成) ---
 st.subheader("📚 学习足迹")
 
 # 初始化 session_state
@@ -456,7 +460,6 @@ if 'filter_language' not in st.session_state:
     st.session_state.filter_language = None
 if 'review_mode' not in st.session_state:
     st.session_state.review_mode = False
-# 🌟 初始化日期筛选状态
 if 'filter_date' not in st.session_state:
     st.session_state.filter_date = None
 
@@ -466,9 +469,10 @@ history_df = load_history()
 if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 顶部工具栏：日期 + 筛选 + 复习模式 + 导出
-    col_date, col_filter, col_review, col_export = st.columns([0.25, 0.45, 0.15, 0.15])
+    # 调整列宽：将原 col_date 拆分为 col_date_input 和 col_date_clear
+    col_date_input, col_date_clear, col_filter, col_review, col_export = st.columns([0.20, 0.05, 0.45, 0.15, 0.15])
     
-    with col_date:
+    with col_date_input:
         st.markdown("##### 🔍 选择日期")
         st.session_state.filter_date = st.date_input(
             "选择查询日期",
@@ -477,12 +481,17 @@ if not history_df.empty and 'timestamp' in history_df.columns:
             key='date_selector',
             label_visibility="collapsed"
         )
+    
+    # 🌟 新增清除按钮
+    with col_date_clear:
+        st.markdown("<div style='height:30px;'></div>", unsafe_allow_html=True) # 占位符对齐
+        st.button("❌", key='clear_date_btn', help="清除日期筛选", on_click=clear_date_filter)
+
 
     with col_filter:
         available_languages = history_df['language'].unique().tolist()
         if len(available_languages) > 0:
             st.markdown("##### 语言筛选")
-            # 自动调整列宽以适应语言数量
             cols = st.columns(min(len(available_languages), 5)) 
             def set_lang_filter(lang):
                 if st.session_state.filter_language == lang:
@@ -493,7 +502,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
                 st.session_state.delete_selections = {}
 
             for i, lang in enumerate(available_languages):
-                if i < 5: # 仅显示前 5 个语言，避免溢出
+                if i < 5: 
                     btn_type = "primary" if st.session_state.filter_language == lang else "secondary"
                     if cols[i].button(lang, key=f"filter_btn_{lang}", type=btn_type):
                         set_lang_filter(lang)
@@ -521,15 +530,13 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     if st.session_state.filter_language:
         filtered_df = filtered_df[filtered_df['language'] == st.session_state.filter_language]
 
-    # 🌟 日期过滤逻辑
+    # 日期过滤逻辑
     if st.session_state.filter_date:
-        # 确保时间戳列存在
         if 'timestamp' in filtered_df.columns:
-            # 将 timestamp 字符串转换为 datetime.date 对象进行比对
+            # 确保时间戳是日期对象
             filtered_df['record_date'] = pd.to_datetime(filtered_df['timestamp']).dt.date
             selected_date = st.session_state.filter_date
             filtered_df = filtered_df[filtered_df['record_date'] == selected_date]
-        # 清理临时列
         if 'record_date' in filtered_df.columns:
             filtered_df = filtered_df.drop(columns=['record_date'])
             
