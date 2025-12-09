@@ -486,8 +486,7 @@ if not history_df.empty and 'timestamp' in history_df.columns:
     
     # 🌟 新增清除按钮
     with col_date_clear:
-        st.button("❌", key='clear_date_btn', help="清除日期筛选", on_click=)
-
+        st.button("❌", key='clear_date_btn', help="清除日期筛选", on_click=clear_date_filter)
 
     with col_filter:
         available_languages = history_df['language'].unique().tolist()
@@ -656,5 +655,6 @@ if not history_df.empty and 'timestamp' in history_df.columns:
 
 else:
     st.info("🌟 欢迎使用！输入第一个句子开始你的语言之旅吧！")
+
 
 
